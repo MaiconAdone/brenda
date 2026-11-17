@@ -1,0 +1,16 @@
+# Escopo do piloto. A ingestão (Fase 1) recusa rodar enquanto o município não for definido.
+piloto:
+  # Código IBGE de 7 dígitos do município. Ex.: "4205407" (Florianópolis/SC)
+  municipio_ibge: null
+  # Sigla da UF. Ex.: "SC"
+  uf: null
+  # Período analisado: últimos N anos a partir da data de referência.
+  periodo_anos: 4
+  # Data de referência (AAAA-MM-DD). null = hoje.
+  data_referencia: null
+
+finalidade: >
+  Interesse público: identificar indícios de irregularidade em contratações públicas
+  para encaminhamento, após revisão humana, a órgãos de controle (MP, TCE/TCU, CGU)
+  ou à imprensa. Base legal: LGPD art. 7º, III e IX, e art. 23 (dados tornados
+  públicos pelo próprio poder público).

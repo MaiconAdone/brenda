@@ -1,0 +1,59 @@
+name: lupa-cidada
+
+x-app: &app
+  build: .
+  env_file: .env
+  environment:
+    LUPA_DATA_DIR: /app/data
+    LUPA_LOG_DIR: /app/logs
+    NEO4J_URI: bolt://neo4j:7687
+  volumes:
+    - ./data:/app/data
+    - ./logs:/app/logs
+    - ./config:/app/config:ro
+
+services:
+  neo4j:
+    image: neo4j:5.24-community
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:?defina NEO4J_PASSWORD no .env}
+      NEO4J_PLUGINS: '["apoc"]'
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    volumes:
+      - neo4j-dados:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 10s
+      retries: 10
+
+  api:
+    <<: *app
+    command: uvicorn lupa.api.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  ui:
+    <<: *app
+    command: streamlit run src/lupa/ui/app.py --server.address 0.0.0.0 --server.port 8501
+    ports:
+      - "127.0.0.1:8501:8501"
+    depends_on: [api]
+
+  orquestrador:
+    <<: *app
+    command: dagster dev -m pipelines.definitions -h 0.0.0.0 -p 3000
+    environment:
+      DAGSTER_HOME: /app/data/.dagster
+      LUPA_DATA_DIR: /app/data
+      LUPA_LOG_DIR: /app/logs
+      NEO4J_URI: bolt://neo4j:7687
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+
+volumes:
+  neo4j-dados:

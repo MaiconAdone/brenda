@@ -1,0 +1,39 @@
+# Dados nunca vão para o repositório (bronze/silver/gold são reproduzíveis pelos pipelines)
+data/**
+!data/**/
+!data/**/.gitkeep
+logs/
+*.duckdb
+*.duckdb.wal
+*.parquet
+*.zip
+
+# Segredos
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Dagster
+.dagster/
+tmp*/
+
+# Notebooks: só código, sem saídas (podem conter dados)
+.ipynb_checkpoints/
+
+# Editores
+.vscode/
+.idea/
+.DS_Store

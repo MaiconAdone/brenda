@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  qualidade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.13.9"
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen --extra api --extra ui --extra orquestracao
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: Tipos
+        run: uv run mypy
+      - name: Testes (somente dados sintéticos)
+        run: uv run pytest --cov=lupa --cov-report=term-missing
+      - name: Garantir que nenhum dado foi versionado
+        run: |
+          if git ls-files data | grep -v '\.gitkeep$'; then
+            echo "::error::Há arquivos de dados versionados em data/"; exit 1
+          fi

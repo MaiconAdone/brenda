@@ -1,0 +1,41 @@
+# Pesos e parâmetros dos sinais. Toda alteração deve ser registrada em docs/metodologia.md.
+#
+# score da entidade = soma, por categoria, de min(teto_categoria, Σ peso × confiança)
+# Sinais com somente_combinado: true só contam se outro sinal disparar para a mesma entidade.
+
+categorias:
+  fachada:             {teto: 30}
+  laranja:             {teto: 25}
+  conflito_interesse:  {teto: 30}
+  conluio:             {teto: 30}
+  execucao_contratual: {teto: 25}
+  anomalia:            {teto: 10}
+
+sinais:
+  # Empresa de fachada
+  F01: {peso: 12, ativo: true, parametros: {dias_max_abertura: 180}}
+  F02: {peso: 10, ativo: true, parametros: {razao_min_contrato_capital: 20}}
+  F03: {peso: 8,  ativo: false, parametros: {}}  # depende de RAIS por estabelecimento (não pública)
+  F04: {peso: 8,  ativo: true, parametros: {min_empresas_mesmo_endereco: 5}}
+  F05: {peso: 8,  ativo: true, parametros: {}}
+  F06: {peso: 12, ativo: true, parametros: {}}
+  # Laranja
+  L01: {peso: 12, ativo: true, parametros: {valor_min_contratos: 500000}}
+  L02: {peso: 8,  ativo: true, parametros: {percentil_anomalo: 0.99}}
+  L03: {peso: 6,  ativo: true, parametros: {valor_min_contratos: 500000}}
+  L04: {peso: 8,  ativo: true, parametros: {janela_dias: 90, min_trocas: 2}}
+  # Conflito de interesse
+  C01: {peso: 20, ativo: true, parametros: {}}
+  C02: {peso: 12, ativo: true, parametros: {}}
+  C03: {peso: 12, ativo: true, parametros: {}}
+  C04: {peso: 3,  ativo: true, somente_combinado: true, parametros: {}}
+  # Conluio
+  K01: {peso: 10, ativo: true, parametros: {min_disputas_conjuntas: 5}}
+  K02: {peso: 12, ativo: true, parametros: {tamanho_max_grupo: 5}}
+  K03: {peso: 10, ativo: true, parametros: {dif_relativa_max: 0.01}}
+  K04: {peso: 15, ativo: true, parametros: {}}
+  # Execução contratual
+  E01: {peso: 10, ativo: true, parametros: {limite_aditivo: 0.25}}
+  E02: {peso: 10, ativo: true, parametros: {min_dispensas: 3, janela_dias: 365}}
+  E03: {peso: 12, ativo: true, parametros: {margem_abaixo_limite: 0.10, janela_dias: 90}}
+  E04: {peso: 20, ativo: true, parametros: {}}
