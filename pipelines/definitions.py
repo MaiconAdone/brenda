@@ -12,6 +12,7 @@ from dagster import (
     AssetCheckSpec,
     AssetExecutionContext,
     AssetsDefinition,
+    AssetSelection,
     Definitions,
     MaterializeResult,
     MetadataValue,
@@ -20,6 +21,7 @@ from dagster import (
 )
 
 from lupa.config import carregar_env, carregar_regras
+from lupa.graph.etapas import ETAPAS as ETAPAS_GRAFO
 from lupa.ingestion.contexto import Contexto, contexto_padrao
 from lupa.ingestion.etapas import ETAPAS, Resultado
 
@@ -51,7 +53,12 @@ DEPENDENCIAS = {
     "receita_cnpj": ["pncp"],
     "sancoes": ["receita_cnpj"],
     "bolsa_familia": ["receita_cnpj"],
+    "entidades": ["pncp", "tse", "receita_cnpj", "sancoes"],
+    "grafo": ["entidades"],
+    "neo4j": ["grafo"],
 }
+
+GRUPOS = {"entidades": "grafo", "grafo": "grafo", "neo4j": "neo4j"}
 
 
 def _materializar(resultado: Resultado) -> MaterializeResult:
@@ -82,7 +89,7 @@ def _materializar(resultado: Resultado) -> MaterializeResult:
 def _criar_asset(nome: str, funcao: Callable[[Contexto], Resultado]) -> AssetsDefinition:
     @asset(
         name=nome,
-        group_name="ingestao",
+        group_name=GRUPOS.get(nome, "ingestao"),
         deps=DEPENDENCIAS[nome],
         description=(funcao.__doc__ or "").strip(),
         check_specs=[AssetCheckSpec("qualidade", asset=nome)],
@@ -93,11 +100,15 @@ def _criar_asset(nome: str, funcao: Callable[[Contexto], Resultado]) -> AssetsDe
     return _asset
 
 
-ASSETS_INGESTAO = [_criar_asset(nome, funcao) for nome, funcao in ETAPAS.items()]
+ASSETS = [_criar_asset(nome, funcao) for nome, funcao in {**ETAPAS, **ETAPAS_GRAFO}.items()]
 
-ingestao_completa = define_asset_job("ingestao_completa", selection="*")
+ingestao_completa = define_asset_job(
+    "ingestao_completa", selection=AssetSelection.groups("configuracao", "ingestao")
+)
+grafo_completo = define_asset_job("grafo_completo", selection=AssetSelection.groups("grafo"))
+carga_neo4j = define_asset_job("carga_neo4j", selection=AssetSelection.groups("neo4j"))
 
 defs = Definitions(
-    assets=[configuracao_validada, *ASSETS_INGESTAO],
-    jobs=[ingestao_completa],
+    assets=[configuracao_validada, *ASSETS],
+    jobs=[ingestao_completa, grafo_completo, carga_neo4j],
 )

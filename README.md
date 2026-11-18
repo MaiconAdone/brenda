@@ -38,6 +38,9 @@ make ingest     # materializa todos os assets de ingestão
 
 Ingestão sem Dagster: `uv run python -m lupa.ingestion [ibge pncp receita_cnpj sancoes bolsa_familia tse]`.
 
+Entidades e grafo: `uv run python -m lupa.graph` (gera `data/gold/`). Para carregar no Neo4j
+com o Docker Compose no ar: `uv run python -m lupa.graph neo4j`.
+
 Sem `make`: `uv run pytest`, `uv run ruff check .`, `uv run mypy`,
 `uv run uvicorn lupa.api.main:app`, `uv run streamlit run src/lupa/ui/app.py`,
 `uv run dagster dev -m pipelines.definitions`.
@@ -56,7 +59,7 @@ Sem `make`: `uv run pytest`, `uv run ruff check .`, `uv run mypy`,
 
 - [x] Fase 0: fundação
 - [x] Fase 1: ingestão (IBGE, PNCP, CNPJ, CEIS/CNEP, Bolsa Família, TSE) — piloto Mauá/SP
-- [ ] Fase 2: entidades e grafo
+- [x] Fase 2: entidades (Splink) e grafo (NetworkX; carga no Neo4j)
 - [ ] Fase 3: sinais e score
 - [ ] Fase 4: interface e dossiê
 - [ ] Fase 5: ML (anomalias, comunidades, SHAP)

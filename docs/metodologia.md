@@ -1,5 +1,48 @@
 # Metodologia
 
+## Resolução de entidades (pessoas)
+
+Código: `lupa.entity_resolution.pessoas`. Parâmetros: `resolucao_entidades` em
+`config/regras.yaml`.
+
+1. **Determinística.** Menções com o mesmo `id_pessoa` (miolo do CPF + nome normalizado) são a
+   mesma pessoa. Candidatos sem CPF publicado (TSE 2024) recebem o id `tse-<ano>-<sq>`.
+2. **Probabilística (Splink 5, DuckDB).** Pares de pessoas com ids diferentes são comparados em:
+
+   | Comparação | Níveis | m (fixo) |
+   |---|---|---|
+   | Nome (Jaro-Winkler, com ajuste por frequência do nome) | idêntico / ≥ 0,95 / ≥ 0,88 / diferente | 0,80 / 0,12 / 0,05 / 0,03 |
+   | Miolo do CPF | igual / diferente | 0,97 / 0,03 |
+   | Idade (ano de nascimento do TSE; faixa etária do QSA) | mesmo ano / compatível / incompatível | 0,85 / 0,12 / 0,03 |
+
+   - As probabilidades **m** são fixadas por julgamento (não há pares rotulados para treinar).
+     As **u** são estimadas por amostragem aleatória dos próprios dados, com semente fixa.
+   - Probabilidade a priori: `2 × fracao_esperada_duplicatas / (n − 1)`, supondo que 2% das
+     pessoas tenham uma duplicata.
+   - Blocagem: mesmo miolo; mesmo nome; mesmo primeiro e último nome.
+   - Só entram ligações com probabilidade ≥ `limiar_probabilidade` (0,8).
+3. **Nunca só pelo nome.** O par precisa ter miolo do CPF nos dois lados, **ou** idade nos dois
+   lados **e** nome idêntico/quase idêntico (≥ 0,95). No piloto, aceitar "nome parecido +
+   mesmo ano" sem miolo ligou pessoas diferentes que só compartilhavam prenome e último
+   sobrenome. Por isso a regra foi endurecida.
+4. Cada ligação guarda a probabilidade, o peso de cada comparação (`mw_*`) e uma evidência em
+   texto (ex.: "nome quase idêntico; miolo do CPF igual"). Sinais que usam a ligação herdam a
+   probabilidade como confiança.
+
+Resultado no piloto (Mauá, 2026-11): 40.368 pessoas, 350 ligações (157 candidatos de 2024 ligados
+à candidatura de 2020 por nome e ano de nascimento; 193 por miolo do CPF igual com nome
+idêntico ou parecido, como abreviações e nomes de casada).
+
+Limitações:
+
+- Um candidato de 2024 sem CPF só se liga a um sócio por nome + faixa etária, o que fica
+  abaixo do limiar (a faixa é larga). Na prática, a ligação passa pela candidatura de 2020,
+  que tem CPF.
+- A frequência dos nomes é medida nos dados do piloto, não na população. Nomes raros aqui
+  podem ser comuns no país, então a probabilidade de nomes "raros" tende a ser otimista.
+  Isso é compensado pela exigência de miolo ou idade.
+- 22 sócios estrangeiros sem documento ficam fora do grafo.
+
 ## Score por regras (Fase 1 do scoring)
 
 ```

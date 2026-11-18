@@ -109,11 +109,20 @@ class ConfigSinal(BaseModel):
     parametros: dict[str, Any] = Field(default_factory=dict)
 
 
+class ConfigResolucao(BaseModel):
+    """Parâmetros da resolução probabilística de pessoas (Splink)."""
+
+    limiar_probabilidade: float = Field(default=0.8, gt=0, lt=1)
+    fracao_esperada_duplicatas: float = Field(default=0.02, gt=0, lt=1)
+    semente: int = 42
+
+
 class ConfigRegras(BaseModel):
     """Conteúdo de ``config/regras.yaml``."""
 
     categorias: dict[str, ConfigCategoria]
     sinais: dict[str, ConfigSinal]
+    resolucao_entidades: ConfigResolucao = Field(default_factory=ConfigResolucao)
 
 
 # Dois primeiros dígitos do código IBGE de município por UF.

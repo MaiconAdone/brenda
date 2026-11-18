@@ -39,3 +39,11 @@ sinais:
   E02: {peso: 10, ativo: true, parametros: {min_dispensas: 3, janela_dias: 365}}
   E03: {peso: 12, ativo: true, parametros: {margem_abaixo_limite: 0.10, janela_dias: 90}}
   E04: {peso: 20, ativo: true, parametros: {}}
+
+# Resolução de entidades (Splink). Ligações abaixo do limiar não entram no grafo.
+# fracao_esperada_duplicatas define a probabilidade a priori de dois registros serem a
+# mesma pessoa. Ver docs/metodologia.md.
+resolucao_entidades:
+  limiar_probabilidade: 0.8
+  fracao_esperada_duplicatas: 0.02
+  semente: 42

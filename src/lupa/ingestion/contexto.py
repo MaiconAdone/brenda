@@ -40,6 +40,10 @@ class Contexto:
         """Diretório (criado se preciso) dentro de ``silver/``."""
         return self._dir("silver", *partes)
 
+    def gold(self, *partes: str) -> Path:
+        """Diretório (criado se preciso) dentro de ``gold/``."""
+        return self._dir("gold", *partes)
+
     def temporario(self) -> Path:
         """Diretório de trabalho para arquivos descompactados."""
         return self._dir("tmp")

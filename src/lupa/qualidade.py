@@ -160,9 +160,48 @@ ESPECIFICACOES: dict[str, Especificacao] = {
                                   sem_cpf_aberto=("doador_documento",), minimo_linhas=0),
     "tse/despesas": Especificacao(nao_nulos=("sq_candidato",), nao_negativos=("valor",),
                                   sem_cpf_aberto=("fornecedor_documento",), minimo_linhas=0),
+    "entidades/pessoas": Especificacao(chave=("no_id",), nao_nulos=("no_id", "origens"),
+                                       sem_cpf_aberto=("documento",)),
+    "entidades/ligacoes": Especificacao(chave=("id_a", "id_b"),
+                                        nao_nulos=("probabilidade", "evidencia"), minimo_linhas=0),
 }  # fmt: skip
 
 
 def verificar_tabela(nome: str, df: pl.DataFrame) -> list[Falha]:
     """Verifica uma tabela silver pelo nome ``fonte/tabela``."""
     return verificar(df, nome, ESPECIFICACOES[nome])
+
+
+def verificar_grafo(nos: dict[str, pl.DataFrame], arestas: dict[str, pl.DataFrame]) -> list[Falha]:
+    """Integridade do grafo gold.
+
+    - ids únicos e não nulos por rótulo;
+    - toda aresta aponta para nós existentes do rótulo indicado;
+    - toda aresta tem ``fonte`` (explicabilidade);
+    - nenhum CPF aberto nos nós de pessoa.
+    """
+    falhas: list[Falha] = []
+
+    def falha(tabela: str, regra: str, detalhe: str, linhas: int) -> None:
+        if linhas:
+            falhas.append(Falha(tabela, regra, detalhe, linhas))
+
+    for rotulo, df in nos.items():
+        tabela = f"grafo/nos/{rotulo}"
+        falha(tabela, "chave", "id", df.height - df["id"].drop_nulls().n_unique())
+    if "Pessoa" in nos:
+        documento = nos["Pessoa"]["documento"].cast(pl.String)
+        falha("grafo/nos/Pessoa", "sem_cpf_aberto", "documento",
+              int(documento.str.contains(_CPF_ABERTO).sum() or 0))  # fmt: skip
+
+    for tipo, df in arestas.items():
+        tabela = f"grafo/arestas/{tipo}"
+        falha(tabela, "nao_nulo", "fonte", df["fonte"].null_count())
+        for lado in ("origem", "destino"):
+            for rotulo in df[f"rotulo_{lado}"].unique().to_list():
+                ids = nos[rotulo]["id"] if rotulo in nos else pl.Series([], dtype=pl.String)
+                pontas = df.filter(pl.col(f"rotulo_{lado}") == rotulo)[lado]
+                falha(
+                    tabela, "ponta_inexistente", f"{lado}:{rotulo}", int((~pontas.is_in(ids)).sum())
+                )
+    return falhas

@@ -45,6 +45,51 @@ qualquer pessoa reproduz o resultado com `make ingest`.
 - O Neo4j (no Docker Compose) atende às consultas de subgrafo de 2 saltos da interface e à
   exploração por jornalistas. Avaliar o desempenho na Fase 6 (estado inteiro).
 
+### Grafo (Fase 2)
+
+Construído por `lupa.graph.modelo.construir` e gravado em `data/gold/grafo/` (um Parquet por
+rótulo de nó e por tipo de aresta). Toda aresta tem `fonte` (link ou arquivo oficial).
+
+| Nó | `id` | Origem |
+|---|---|---|
+| `Pessoa` | `id_pessoa` (HMAC) ou `tse-<ano>-<sq>` para candidato sem CPF publicado | sócios, fornecedores PF, doadores, candidatos, sancionados |
+| `Empresa` | CNPJ raiz (8) | Receita; fornecedores, doadores e sócios PJ |
+| `Estabelecimento` | CNPJ (14) | Receita |
+| `Endereco` | hash do endereço normalizado, sem complemento (nível do prédio) | Receita |
+| `Telefone` / `Email` | HMAC com sal (o contato não é guardado) | Receita |
+| `OrgaoPublico` | CNPJ | PNCP |
+| `Licitacao` / `Contrato` | número de controle PNCP | PNCP |
+| `Candidatura` | `<ano>-<sq_candidato>` | TSE |
+| `Sancao` | `<cadastro>-<código>` | CEIS/CNEP (só de quem já está no grafo) |
+
+| Aresta | De → Para | Propriedades |
+|---|---|---|
+| `SOCIO_DE` | Pessoa/Empresa → Empresa | qualificação, data de entrada, faixa etária |
+| `UNIDADE_DE` | Estabelecimento → Empresa | |
+| `LOCALIZADA_EM` | Estabelecimento → Endereco | complemento |
+| `TEM_TELEFONE` / `TEM_EMAIL` | Estabelecimento → Telefone/Email | |
+| `PROMOVIDA_POR` | Licitacao → OrgaoPublico | |
+| `VENCEU` | Empresa/Pessoa → Licitacao | nº de itens, valor homologado, CNPJ do estabelecimento |
+| `PARTE_DE` | Empresa/Pessoa → Contrato | valor global |
+| `CELEBRADO_POR` | Contrato → OrgaoPublico | |
+| `ORIGINADO_DE` | Contrato → Licitacao | |
+| `CANDIDATO_EM` | Pessoa → Candidatura | |
+| `DOOU_PARA` | Pessoa/Empresa → Candidatura | valor somado, nº de lançamentos |
+| `FORNECEU_CAMPANHA` | Pessoa/Empresa → Candidatura | valor somado, nº de lançamentos |
+| `SANCIONADA` | Empresa/Pessoa → Sancao | |
+| `MESMA_ENTIDADE_PROVAVEL` | Pessoa → Pessoa | probabilidade, evidência, peso por comparação |
+
+Diferenças em relação ao modelo inicial do projeto:
+
+- `CONTRATADA_POR` foi desdobrada em `PARTE_DE` + `CELEBRADO_POR`, passando pelo nó
+  `Contrato`, para guardar os dados do contrato.
+- `PARTICIPOU_DE` não existe: o PNCP só publica os vencedores (ver `docs/fontes.md`).
+- `SERVIDOR_DE` não existe: não há fonte aberta de servidores municipais de Mauá.
+- `FORNECEU_CAMPANHA` foi acrescentada (despesas de campanha do TSE).
+
+Consultas: `lupa.graph.consultas` (NetworkX) e `src/lupa/graph/consultas.cypher` (Neo4j).
+Carga no Neo4j: `uv run python -m lupa.graph neo4j` (apaga e recarrega o banco).
+
 ### Identidade de pessoas
 
 As fontes publicam CPF parcial (6 dígitos centrais). A identidade determinística é

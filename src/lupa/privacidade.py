@@ -36,6 +36,12 @@ def id_pessoa(cpf: str, nome: str, sal: str | None = None) -> str:
     return hmac.new(_sal(sal), chave, hashlib.sha256).hexdigest()[:32]
 
 
+def hash_contato(valor: str, sal: str | None = None) -> str:
+    """Hash com sal de telefone ou e-mail: permite comparar sem guardar o contato."""
+    chave = valor.strip().lower().encode("utf-8")
+    return hmac.new(_sal(sal), b"contato|" + chave, hashlib.sha256).hexdigest()[:24]
+
+
 def pseudonimizar(
     df: pl.DataFrame,
     col_documento: str,
