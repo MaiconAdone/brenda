@@ -124,7 +124,7 @@ def _resultado(ctrl: str, cnpj: str, valor: float) -> dict[str, object]:
     return {
         "numero_controle_pncp": ctrl, "fornecedor_tipo_pessoa": "PJ", "fornecedor_documento": cnpj,
         "fornecedor_id_pessoa": None, "fornecedor_nome_normalizado": f"EMPRESA {cnpj[:4]}",
-        "valor_total_homologado": valor,
+        "valor_total_homologado": valor, "data_resultado": datetime(2025, 5, 10),
     }  # fmt: skip
 
 
@@ -177,7 +177,8 @@ def silver(ctx: Contexto) -> Contexto:
     _gravar(ctx, "pncp", "contratacoes", [
         {"numero_controle_pncp": ctrl, "orgao_cnpj": ORGAO, "orgao_nome": "MUNICIPIO SINTETICO",
          "orgao_esfera": "M", "orgao_poder": "E", "objeto": f"Objeto {ctrl}",
-         "modalidade_nome": "Pregão", "situacao": "Divulgada", "valor_estimado": 100.0,
+         "modalidade_nome": "Pregão", "modalidade_id": 6,
+         "amparo_legal": "Lei 14.133/2021, Art. 28, I", "situacao": "Divulgada", "valor_estimado": 100.0,
          "valor_homologado": 90.0, "data_publicacao": date(2025, 5, 1), "unidade_nome": "SEC",
          "url_fonte": f"{URL}/{ctrl}"}
         for ctrl in ("CTRL-1", "CTRL-2")
@@ -228,6 +229,8 @@ def silver(ctx: Contexto) -> Contexto:
          "cnpj_raiz": raiz, "documento": f"{raiz}000100", "nome_normalizado": "X",
          "categoria": "Impedimento", "data_inicio": date(2025, 1, 1), "data_fim": None,
          "orgao_sancionador": "CGU", "esfera_orgao_sancionador": "FEDERAL",
+         "uf_orgao_sancionador": "DF",
+         "abrangencia": "Em todos os Poderes da Esfera do órgão sancionador",
          "fundamentacao_legal": "Lei", "numero_processo": "1",
          "arquivo_fonte": "https://portaldatransparencia.gov.br/download-de-dados/ceis/20260315"}
         for cod, raiz in (("1", "44555666"), ("2", "77777777"))

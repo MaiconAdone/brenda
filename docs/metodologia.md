@@ -60,30 +60,56 @@ score_total          = Σ score_categoria
 
 ## Catálogo de sinais
 
+Código: `src/lupa/signals/catalogo/` (um módulo por categoria, uma classe por sinal, teste
+em `tests/sinais/`). Execução: `uv run python -m lupa.signals`.
+
 | Id | Sinal | Categoria | Estado | Limitação conhecida |
 |---|---|---|---|---|
-| F01 | Empresa aberta pouco antes da 1ª vitória | fachada | planejado | — |
-| F02 | Capital social baixo × valor contratado | fachada | planejado | Capital social é declaratório |
-| F03 | Sem funcionários com contratos relevantes | fachada | **inativo** | RAIS identificada por estabelecimento não é pública |
-| F04 | Endereço compartilhado / residencial | fachada | planejado | Centros empresariais e contabilidades geram falso positivo |
-| F05 | CNAE incompatível com o objeto | fachada | planejado | Exige mapear texto do objeto para CNAE |
-| F06 | Telefone/e-mail compartilhado entre concorrentes | fachada | planejado | Contadores compartilham contato |
-| L01 | Sócio beneficiário de programa social | laranja | planejado | Ligação por CPF parcial + nome |
-| L02 | Sócio de número anômalo de empresas | laranja | planejado | — |
-| L03 | Faixa etária extrema + contratos altos | laranja | planejado | QSA publica só faixa etária |
-| L04 | Troca de QSA perto de licitações | laranja | planejado | Exige histórico de snapshots mensais |
-| C01 | Sócio é servidor do órgão contratante | conflito | planejado | Servidores municipais não estão na CGU; depende de TCE-SP/prefeitura |
-| C02 | Sócio compartilha endereço com servidor | conflito | planejado | Endereço de servidor raramente é público |
-| C03 | Doação de campanha ao agente do ente | conflito | planejado | Doador PJ liga por CNPJ; candidato sem CPF publicado (TSE -4) |
-| C04 | Sobrenome comum com agente político | conflito | planejado | Sinal fraco, somente combinado |
-| K01 | Mesmos concorrentes repetidamente | conluio | planejado | — |
-| K02 | Rodízio de vencedores | conluio | planejado | — |
-| K03 | Propostas próximas / desconto padronizado | conluio | planejado | PNCP nem sempre traz todas as propostas |
-| K04 | Concorrentes com sócios/contatos em comum | conluio | planejado | — |
-| E01 | Aditivos acima do limite | execução | planejado | Limite de 25% (50% em reforma), Lei 14.133 art. 125 |
-| E02 | Dispensas repetidas ao mesmo fornecedor | execução | planejado | — |
-| E03 | Fracionamento abaixo do limite de dispensa | execução | planejado | Limites atualizados anualmente por decreto |
-| E04 | Contratada com sanção ativa | execução | planejado | Só há o arquivo do dia; histórico depende de coletas recorrentes |
+| F01 | Empresa aberta pouco antes da 1ª vitória (≤ 180 dias) | fachada | **ativo** | Empresas novas vencem legitimamente |
+| F02 | Valor vencido ≥ 20× o capital social | fachada | **ativo** | Capital social é declaratório; capital zero fica de fora |
+| F03 | Sem funcionários com contratos relevantes | fachada | inativo | RAIS por estabelecimento não é pública |
+| F04 | Endereço (prédio) com ≥ 5 empresas ativas | fachada | **ativo** | Centros empresariais e contabilidades geram falso positivo |
+| F05 | CNAE incompatível com o objeto | fachada | não implementado | Exige mapear o texto do objeto para CNAE |
+| F06 | Telefone/e-mail compartilhado entre fornecedoras do mesmo órgão | fachada | **ativo** | Ignora contatos usados por > 10 empresas (contadores, centrais) |
+| L01 | Sócio beneficiário de programa social | laranja | aguardando dados | Bolsa Família ainda não coletado |
+| L02 | Sócio PF em número anômalo de empresas (≥ p99 e ≥ 10) | laranja | **ativo** | Holdings e grupos familiares |
+| L03 | Sócio de até 20 ou mais de 80 anos + ≥ R$ 500 mil vencidos | laranja | **ativo** | QSA publica só a faixa etária |
+| L04 | ≥ 2 sócios entraram até 90 dias antes de uma vitória | laranja | **ativo** | Só a foto atual do QSA; saídas não aparecem |
+| C01 | Sócio é agente político eleito no município (parcial) | conflito | **ativo (parcial)** | Servidores municipais não têm fonte aberta; cobre só eleitos |
+| C02 | Sócio compartilha endereço com servidor | conflito | não implementado | Sem fonte de servidores |
+| C03 | Sócio doou, ou empresa/sócio prestou serviço, à campanha de eleito | conflito | **ativo** | Doação é legal; aponta proximidade |
+| C04 | Sobrenome comum com agente político | conflito | não implementado | Sinal fraco; fica para depois |
+| K01–K03 | Concorrentes repetidos, rodízio, propostas próximas | conluio | não implementados | O PNCP só publica vencedores |
+| K04 | Fornecedoras do mesmo órgão com sócio em comum | conluio | **ativo** | Grupos econômicos; sócio PJ em comum tem confiança 0,5 |
+| E01 | Valor global > 125% do inicial | execução | **ativo** | Aproximação sem ler os termos aditivos |
+| E02 | ≥ 3 dispensas do mesmo órgão ao mesmo fornecedor em 365 dias | execução | **ativo** | Emergências e pequenas compras distintas |
+| E03 | Dispensas por valor (art. 75, I/II) que somam acima do limite em 90 dias | execução | **ativo** | Aproxima "mesma natureza" por órgão + fornecedor |
+| E04 | Vitória/contrato com sanção vigente que alcança o contratante | execução | **ativo** | Só sanções ainda listadas no CEIS/CNEP |
+
+São 14 sinais ativos (13 completos e o C01 parcial).
+
+### Filtros comuns
+
+- **Naturezas jurídicas excluídas** dos sinais de fachada, laranja e conluio: órgãos públicos
+  (1xxx), empresa pública (2011), economia mista (2038), S.A. aberta (2046) e consórcio de
+  sociedades (2151). Na primeira rodada, bancos e estatais apareceram no topo por causa de
+  diretores no QSA, agências em prédios compartilhados e centrais de atendimento; consórcios
+  são criados para a licitação e têm as consorciadas como sócias.
+- **E04 e abrangência da sanção.** Só dispara quando a sanção alcançava o contratante:
+  todas as esferas (confiança 1); esfera do sancionador igual à do contratante, com estado
+  ou município do piloto (1, ou 0,8 se também restrita ao poder); só no órgão sancionador e
+  esse órgão é do município (0,8); sem informação (0,5). Uma sanção federal não alcança um
+  órgão municipal, por exemplo.
+- **Limites de dispensa (E03)** por ano em `config/regras.yaml`: 2025 (Decreto 12.343/2024)
+  e 2026 (Decreto 12.807/2025) conferidos no texto oficial; 2023 e 2024 ainda precisam ser
+  conferidos no Planalto.
+
+### Saídas
+
+- `data/gold/alertas/alertas.parquet`: um alerta por linha, com as evidências em JSON.
+- `data/gold/alertas/scores.parquet`: score e decomposição por entidade.
+- `data/gold/relatorios/top50.md`: ranking com evidências, fontes e limitações, marcado
+  como **não revisado** e de uso interno.
 
 ## Avaliação
 
@@ -97,3 +123,6 @@ score_total          = Σ score_categoria
 | Data | Sinal | De → Para | Motivo |
 |---|---|---|---|
 | 2026-11-17 | todos | — → valores iniciais | Calibração inicial por julgamento, a revisar com precisão@k |
+| 2026-11-18 | F06 | — → `max_empresas_por_contato: 10` | Contatos de contadores e centrais dominavam o sinal |
+| 2026-11-18 | L02 | — → `min_empresas: 10` | Piso para o corte por percentil |
+| 2026-11-18 | E03 | `margem_abaixo_limite` → `limites` por ano | Limites legais de dispensa por decreto |

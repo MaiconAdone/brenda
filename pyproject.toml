@@ -51,6 +51,10 @@ select = ["E", "F", "W", "I", "B", "UP", "N", "SIM", "RUF"]
 # Textos em português usam acentos e "–" legitimamente.
 ignore = ["RUF001", "RUF002", "RUF003"]
 
+[tool.ruff.lint.per-file-ignores]
+# Cenários sintéticos em forma de tabela (blocos "fmt: skip").
+"tests/**/conftest.py" = ["E501"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true

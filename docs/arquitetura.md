@@ -98,8 +98,9 @@ pelo Splink e viram arestas `MESMA_ENTIDADE_PROVAVEL` com score. Ver `docs/lgpd.
 
 ### Sinais e score
 
-- Cada sinal é uma subclasse de `lupa.signals.base.Sinal`, registrada com `@registrar`, em seu
-  próprio arquivo e com teste próprio.
+- Cada sinal é uma subclasse de `lupa.signals.base.Sinal`, registrada com `@registrar`, num
+  módulo por categoria (`lupa/signals/catalogo/`) e com teste próprio. As tabelas de entrada
+  (silver, grafo e derivadas) vêm de `lupa.signals.dados.carregar`.
 - O score (`lupa.scoring.regras`) é uma soma ponderada por confiança, com teto por categoria;
   sinais `somente_combinado` são descartados quando estão sozinhos.
 

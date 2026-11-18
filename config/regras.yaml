@@ -18,10 +18,10 @@ sinais:
   F03: {peso: 8,  ativo: false, parametros: {}}  # depende de RAIS por estabelecimento (não pública)
   F04: {peso: 8,  ativo: true, parametros: {min_empresas_mesmo_endereco: 5}}
   F05: {peso: 8,  ativo: true, parametros: {}}
-  F06: {peso: 12, ativo: true, parametros: {}}
+  F06: {peso: 12, ativo: true, parametros: {max_empresas_por_contato: 10}}
   # Laranja
   L01: {peso: 12, ativo: true, parametros: {valor_min_contratos: 500000}}
-  L02: {peso: 8,  ativo: true, parametros: {percentil_anomalo: 0.99}}
+  L02: {peso: 8,  ativo: true, parametros: {percentil_anomalo: 0.99, min_empresas: 10}}
   L03: {peso: 6,  ativo: true, parametros: {valor_min_contratos: 500000}}
   L04: {peso: 8,  ativo: true, parametros: {janela_dias: 90, min_trocas: 2}}
   # Conflito de interesse
@@ -37,7 +37,18 @@ sinais:
   # Execução contratual
   E01: {peso: 10, ativo: true, parametros: {limite_aditivo: 0.25}}
   E02: {peso: 10, ativo: true, parametros: {min_dispensas: 3, janela_dias: 365}}
-  E03: {peso: 12, ativo: true, parametros: {margem_abaixo_limite: 0.10, janela_dias: 90}}
+  E03:
+    peso: 12
+    ativo: true
+    parametros:
+      janela_dias: 90
+      # Limites de dispensa por valor (Lei 14.133, art. 75, I e II), por ano.
+      # 2025: Decreto 12.343/2024; 2026: Decreto 12.807/2025; 2023 e 2024: conferir no Planalto.
+      limites:
+        2023: {I: 114416.65, II: 57208.33}
+        2024: {I: 119812.02, II: 59906.02}
+        2025: {I: 125451.15, II: 62725.59}
+        2026: {I: 130984.20, II: 65492.11}
   E04: {peso: 20, ativo: true, parametros: {}}
 
 # Resolução de entidades (Splink). Ligações abaixo do limiar não entram no grafo.

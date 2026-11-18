@@ -41,6 +41,9 @@ Ingestão sem Dagster: `uv run python -m lupa.ingestion [ibge pncp receita_cnpj 
 Entidades e grafo: `uv run python -m lupa.graph` (gera `data/gold/`). Para carregar no Neo4j
 com o Docker Compose no ar: `uv run python -m lupa.graph neo4j`.
 
+Sinais e score: `uv run python -m lupa.signals [--top 50]` gera os alertas e o relatório
+`data/gold/relatorios/top50.md` (uso interno, revisão humana obrigatória).
+
 Sem `make`: `uv run pytest`, `uv run ruff check .`, `uv run mypy`,
 `uv run uvicorn lupa.api.main:app`, `uv run streamlit run src/lupa/ui/app.py`,
 `uv run dagster dev -m pipelines.definitions`.
@@ -60,7 +63,7 @@ Sem `make`: `uv run pytest`, `uv run ruff check .`, `uv run mypy`,
 - [x] Fase 0: fundação
 - [x] Fase 1: ingestão (IBGE, PNCP, CNPJ, CEIS/CNEP, Bolsa Família, TSE) — piloto Mauá/SP
 - [x] Fase 2: entidades (Splink) e grafo (NetworkX; carga no Neo4j)
-- [ ] Fase 3: sinais e score
+- [x] Fase 3: 14 sinais, score por regras e relatório dos 50 principais alertas
 - [ ] Fase 4: interface e dossiê
 - [ ] Fase 5: ML (anomalias, comunidades, SHAP)
 - [ ] Fase 6: escala
