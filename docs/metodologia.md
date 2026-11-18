@@ -29,9 +29,9 @@ score_total          = Σ score_categoria
 | L02 | Sócio de número anômalo de empresas | laranja | planejado | — |
 | L03 | Faixa etária extrema + contratos altos | laranja | planejado | QSA publica só faixa etária |
 | L04 | Troca de QSA perto de licitações | laranja | planejado | Exige histórico de snapshots mensais |
-| C01 | Sócio é servidor do órgão contratante | conflito | planejado | Servidores municipais dependem do TCE |
+| C01 | Sócio é servidor do órgão contratante | conflito | planejado | Servidores municipais não estão na CGU; depende de TCE-SP/prefeitura |
 | C02 | Sócio compartilha endereço com servidor | conflito | planejado | Endereço de servidor raramente é público |
-| C03 | Doação de campanha ao agente do ente | conflito | planejado | — |
+| C03 | Doação de campanha ao agente do ente | conflito | planejado | Doador PJ liga por CNPJ; candidato sem CPF publicado (TSE -4) |
 | C04 | Sobrenome comum com agente político | conflito | planejado | Sinal fraco, somente combinado |
 | K01 | Mesmos concorrentes repetidamente | conluio | planejado | — |
 | K02 | Rodízio de vencedores | conluio | planejado | — |
@@ -40,7 +40,7 @@ score_total          = Σ score_categoria
 | E01 | Aditivos acima do limite | execução | planejado | Limite de 25% (50% em reforma), Lei 14.133 art. 125 |
 | E02 | Dispensas repetidas ao mesmo fornecedor | execução | planejado | — |
 | E03 | Fracionamento abaixo do limite de dispensa | execução | planejado | Limites atualizados anualmente por decreto |
-| E04 | Contratada com sanção ativa | execução | planejado | Verificar vigência na data do contrato |
+| E04 | Contratada com sanção ativa | execução | planejado | Só há o arquivo do dia; histórico depende de coletas recorrentes |
 
 ## Avaliação
 

@@ -20,13 +20,15 @@ class Piloto(BaseModel):
 
     municipio_ibge: str | None = Field(default=None, pattern=r"^\d{7}$")
     uf: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
+    nome_municipio: str | None = None
+    municipio_receita: str | None = Field(default=None, pattern=r"^\d{4}$")
     periodo_anos: int = Field(default=4, ge=1, le=20)
     data_referencia: date | None = None
 
-    @field_validator("municipio_ibge", mode="before")
+    @field_validator("municipio_ibge", "municipio_receita", mode="before")
     @classmethod
     def _como_texto(cls, valor: Any) -> Any:
-        """Aceita o código IBGE escrito como número no YAML."""
+        """Aceita códigos escritos como número no YAML."""
         return str(valor) if isinstance(valor, int) else valor
 
     def exigir_definido(self) -> tuple[str, str]:
@@ -49,10 +51,46 @@ class Piloto(BaseModel):
         return inicio, fim
 
 
+class ConfigPncp(BaseModel):
+    """Parâmetros de coleta do PNCP."""
+
+    modalidades: list[int] = Field(default_factory=lambda: list(range(1, 14)))
+    intervalo_min_s: float = Field(default=0.25, ge=0)
+
+
+class ConfigReceitaCnpj(BaseModel):
+    """Parâmetros de coleta do CNPJ da Receita."""
+
+    mes: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+
+
+class ConfigTse(BaseModel):
+    """Parâmetros de coleta do TSE."""
+
+    anos: list[int] = Field(default_factory=lambda: [2020, 2024])
+
+
+class ConfigTransparencia(BaseModel):
+    """Parâmetros de coleta do Portal da Transparência."""
+
+    bolsa_familia_meses: list[str] = Field(default_factory=list)
+    intervalo_min_s: float = Field(default=0.7, ge=0)
+
+
+class ConfigIngestao(BaseModel):
+    """Seção ``ingestao`` de ``piloto.yaml``."""
+
+    pncp: ConfigPncp = Field(default_factory=ConfigPncp)
+    receita_cnpj: ConfigReceitaCnpj = Field(default_factory=ConfigReceitaCnpj)
+    tse: ConfigTse = Field(default_factory=ConfigTse)
+    transparencia: ConfigTransparencia = Field(default_factory=ConfigTransparencia)
+
+
 class ConfigPiloto(BaseModel):
     """Conteúdo de ``config/piloto.yaml``."""
 
     piloto: Piloto
+    ingestao: ConfigIngestao = Field(default_factory=ConfigIngestao)
     finalidade: str = Field(min_length=20)
 
 
@@ -85,6 +123,18 @@ _PREFIXO_UF = {
     "SE": "28", "BA": "29", "MG": "31", "ES": "32", "RJ": "33", "SP": "35", "PR": "41",
     "SC": "42", "RS": "43", "MS": "50", "MT": "51", "GO": "52", "DF": "53",
 }  # fmt: skip
+
+
+def carregar_env(caminho: Path = Path(".env")) -> None:
+    """Carrega ``CHAVE=valor`` de um ``.env`` sem sobrescrever o ambiente."""
+    if not caminho.exists():
+        return
+    for linha in caminho.read_text(encoding="utf-8").splitlines():
+        linha = linha.strip()
+        if linha and not linha.startswith("#") and "=" in linha:
+            chave, valor = linha.split("=", 1)
+            if valor.strip():
+                os.environ.setdefault(chave.strip(), valor.strip())
 
 
 def diretorio_config() -> Path:

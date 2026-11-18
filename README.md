@@ -33,8 +33,10 @@ Defina o município do piloto em [config/piloto.yaml](config/piloto.yaml) (`muni
 make test       # testes (somente dados sintéticos)
 make check      # lint + tipos + testes
 make run        # Neo4j, API (:8000), UI (:8501) e Dagster (:3000) via Docker Compose
-make ingest     # materializa os pipelines (a partir da Fase 1)
+make ingest     # materializa todos os assets de ingestão
 ```
+
+Ingestão sem Dagster: `uv run python -m lupa.ingestion [ibge pncp receita_cnpj sancoes bolsa_familia tse]`.
 
 Sem `make`: `uv run pytest`, `uv run ruff check .`, `uv run mypy`,
 `uv run uvicorn lupa.api.main:app`, `uv run streamlit run src/lupa/ui/app.py`,
@@ -53,7 +55,7 @@ Sem `make`: `uv run pytest`, `uv run ruff check .`, `uv run mypy`,
 ## Roteiro
 
 - [x] Fase 0: fundação
-- [ ] Fase 1: ingestão (CNPJ, PNCP, Portal da Transparência, TSE)
+- [x] Fase 1: ingestão (IBGE, PNCP, CNPJ, CEIS/CNEP, Bolsa Família, TSE) — piloto Mauá/SP
 - [ ] Fase 2: entidades e grafo
 - [ ] Fase 3: sinais e score
 - [ ] Fase 4: interface e dossiê

@@ -1,13 +1,30 @@
-# Escopo do piloto. A ingestão (Fase 1) recusa rodar enquanto o município não for definido.
+# Escopo do piloto. A ingestão recusa rodar enquanto o município não for definido.
 piloto:
-  # Código IBGE de 7 dígitos do município. Ex.: "4205407" (Florianópolis/SC)
-  municipio_ibge: null
-  # Sigla da UF. Ex.: "SC"
-  uf: null
+  # Código IBGE de 7 dígitos do município.
+  municipio_ibge: "3529401"   # Mauá
+  uf: SP
+  nome_municipio: MAUA        # nome normalizado (sem acento, caixa alta), usado no TSE
+  # Código de município da Receita Federal (tabela Municipios do CNPJ; difere do IBGE).
+  municipio_receita: "6689"
   # Período analisado: últimos N anos a partir da data de referência.
   periodo_anos: 4
   # Data de referência (AAAA-MM-DD). null = hoje.
   data_referencia: null
+
+ingestao:
+  pncp:
+    # Modalidades da Lei 14.133 (tabela de domínio do PNCP), 1 a 13.
+    modalidades: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+    intervalo_min_s: 0.25      # pausa mínima entre requisições
+  receita_cnpj:
+    mes: null                  # "AAAA-MM"; null = mais recente disponível
+  tse:
+    anos: [2020, 2024]         # eleições municipais no período
+  transparencia:
+    # Meses (AAAAMM) consultados no Novo Bolsa Família. Lista curta por causa do
+    # limite de requisições da API; só sócios de empresas são mantidos (minimização).
+    bolsa_familia_meses: []    # ex.: ["202312", "202412", "202509"]; vazio = não coleta
+    intervalo_min_s: 0.7       # a API limita a ~90 req/min
 
 finalidade: >
   Interesse público: identificar indícios de irregularidade em contratações públicas
