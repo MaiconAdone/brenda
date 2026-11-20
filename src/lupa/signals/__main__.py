@@ -22,7 +22,8 @@ def main(argv: list[str] | None = None) -> int:
     resultado = etapa_sinais(ctx, top=args.top)
     for tabela, linhas in resultado.resumo().items():
         print(f"[sinais] {tabela}: {linhas}")
-    print(f"[sinais] relatório: {ctx.gold('relatorios') / f'top{args.top}.md'}")
+    for nome in (f"top{args.top}.md", f"campanhas_top{args.top}.md"):
+        print(f"[sinais] relatório: {ctx.gold('relatorios') / nome}")
     return 0
 
 

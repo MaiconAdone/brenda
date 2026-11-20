@@ -73,7 +73,9 @@ class ConfigTse(BaseModel):
 class ConfigTransparencia(BaseModel):
     """Parâmetros de coleta do Portal da Transparência."""
 
+    # Vazio = todos os meses desde ``bolsa_familia_desde`` até o mês atual.
     bolsa_familia_meses: list[str] = Field(default_factory=list)
+    bolsa_familia_desde: str = Field(default="202303", pattern=r"^\d{6}$")
     intervalo_min_s: float = Field(default=0.7, ge=0)
 
 

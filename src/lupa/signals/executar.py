@@ -4,7 +4,11 @@ Saídas::
 
     gold/alertas/alertas.parquet   um alerta por linha, evidências em JSON
     gold/alertas/scores.parquet    score por entidade, com decomposição
-    gold/relatorios/top50.md       relatório dos 50 principais alertas (revisão humana)
+    gold/relatorios/top50.md       50 principais fornecedores e pessoas (revisão humana)
+    gold/relatorios/campanhas_top50.md   50 principais candidaturas (revisão humana)
+
+Candidaturas ficam num ranking à parte: os sinais de campanha (L07, L08) medem outra coisa
+e, misturados, tirariam espaço dos fornecedores.
 """
 
 from __future__ import annotations
@@ -63,10 +67,32 @@ def _tabela_alertas(alertas: list[Alerta]) -> pl.DataFrame:
     )  # fmt: skip
 
 
+RANKINGS = {
+    "fornecedores": "principais alertas de fornecedores e pessoas",
+    "campanhas": "principais alertas de candidaturas",
+}
+
+
+def ranking_de(entidade: str) -> str:
+    """Ranking em que a entidade aparece: ``campanhas`` para candidaturas."""
+    return "campanhas" if entidade.startswith("Candidatura:") else "fornecedores"
+
+
+def separar(scores: list[ScoreEntidade]) -> dict[str, list[ScoreEntidade]]:
+    """Scores por ranking, mantendo a ordem."""
+    grupos: dict[str, list[ScoreEntidade]] = {nome: [] for nome in RANKINGS}
+    for s in scores:
+        grupos[ranking_de(s.entidade_id)].append(s)
+    return grupos
+
+
 def _tabela_scores(scores: list[ScoreEntidade]) -> pl.DataFrame:
+    linhas = [(nome, i, s) for nome, g in separar(scores).items() for i, s in enumerate(g, 1)]
+    scores = [s for _, _, s in linhas]
     return pl.DataFrame(
         {
-            "posicao": list(range(1, len(scores) + 1)),
+            "ranking": [nome for nome, _, _ in linhas],
+            "posicao": [i for _, i, _ in linhas],
             "entidade": [s.entidade_id for s in scores],
             "score": [s.total for s in scores],
             "por_categoria": [json.dumps(dict(s.por_categoria)) for s in scores],
@@ -74,7 +100,7 @@ def _tabela_scores(scores: list[ScoreEntidade]) -> pl.DataFrame:
             "descartados": [list(s.descartados) for s in scores],
         },
         schema={
-            "posicao": pl.Int64, "entidade": pl.String, "score": pl.Float64,
+            "ranking": pl.String, "posicao": pl.Int64, "entidade": pl.String, "score": pl.Float64,
             "por_categoria": pl.String, "sinais": pl.List(pl.String),
             "descartados": pl.List(pl.String),
         },
@@ -92,6 +118,10 @@ def etapa_sinais(ctx: Contexto, top: int = 50) -> Resultado:
     tab_alertas, tab_scores = _tabela_alertas(alertas), _tabela_scores(scores)
     gravar_parquet(tab_alertas, ctx.gold("alertas") / "alertas.parquet")
     gravar_parquet(tab_scores, ctx.gold("alertas") / "scores.parquet")
-    texto = gerar_relatorio(scores, catalogo, t, top=top, gerado_em=ctx.hoje())
-    (ctx.gold("relatorios") / f"top{top}.md").write_text(texto, encoding="utf-8")
+    arquivos = {"fornecedores": f"top{top}.md", "campanhas": f"campanhas_top{top}.md"}
+    for nome, grupo in separar(scores).items():
+        texto = gerar_relatorio(
+            grupo, catalogo, t, top=top, gerado_em=ctx.hoje(), titulo=RANKINGS[nome]
+        )
+        (ctx.gold("relatorios") / arquivos[nome]).write_text(texto, encoding="utf-8")
     return Resultado({"alertas/alertas": tab_alertas, "alertas/scores": tab_scores}, [])

@@ -39,9 +39,11 @@ Receita `6689`, TSE `66893`.
    PNCP: contratações anteriores à Lei 14.133 podem faltar.
 8. **PNCP: contratos sem filtro de município.** São consultados por CNPJ dos órgãos que
    publicaram contratações em Mauá e depois filtrados pela unidade (`codigoIbge`).
-9. **Bolsa Família exige chave e é volumoso.** A API limita as requisições por minuto e
-   pagina todos os beneficiários do município. Por isso só os meses listados em
-   `piloto.yaml` são consultados e só sócios correspondentes são guardados.
+9. **Bolsa Família exige chave e é volumoso.** Cerca de 1.235 páginas de 15 registros por mês
+   em Mauá (~18,5 mil saques), de 03/2023 em diante: ~53 mil requisições, cerca de 3,5 horas
+   com 0,2 s entre requisições (limite da API: 400/min de dia). A coleta é retomável por mês
+   e só guarda quem coincide com sócios, doadores ou fornecedores PF de campanha.
+   Não há base aberta de óbitos com identificação para cruzar com beneficiários.
 10. **RAIS por estabelecimento não é pública.** O F03 continua inativo.
 11. **Servidores municipais** não estão no Portal da Transparência (que é federal). O C01 e o C02
     dependem do portal do TCE-SP ou da prefeitura de Mauá, a avaliar.

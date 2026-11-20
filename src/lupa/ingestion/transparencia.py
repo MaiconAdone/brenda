@@ -12,10 +12,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import re
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -153,32 +155,62 @@ def chave_api() -> str | None:
     return os.environ.get("PORTAL_TRANSPARENCIA_API_KEY") or None
 
 
-def coletar_bolsa_familia(
-    ctx: Contexto, cliente: ClienteHttp, socios: pl.DataFrame, sal: str | None = None
-) -> pl.DataFrame:
-    """Marca sócios PF que receberam Novo Bolsa Família nos meses configurados.
+def meses_bolsa_familia(ctx: Contexto) -> list[str]:
+    """Meses (AAAAMM) a consultar: os configurados ou todos desde ``bolsa_familia_desde``."""
+    cfg = ctx.config.ingestao.transparencia
+    if cfg.bolsa_familia_meses:
+        return list(cfg.bolsa_familia_meses)
+    ano, mes = int(cfg.bolsa_familia_desde[:4]), int(cfg.bolsa_familia_desde[4:])
+    hoje = ctx.hoje()
+    meses = []
+    while (ano, mes) <= (hoje.year, hoje.month):
+        meses.append(f"{ano}{mes:02d}")
+        ano, mes = (ano + 1, 1) if mes == 12 else (ano, mes + 1)
+    return meses
 
-    ``socios`` precisa ter ``id_pessoa`` (silver do CNPJ). Só correspondências exatas
-    de miolo do CPF + nome normalizado são mantidas.
+
+def _assinatura(ids: set[str]) -> str:
+    return hashlib.sha256("\n".join(sorted(ids)).encode("utf-8")).hexdigest()
+
+
+def _mes_fechado(mes: str, hoje: date, meses_revisao: int = 3) -> bool:
+    """Meses mais antigos que ``meses_revisao`` não mudam mais e não são recoletados."""
+    ano, m = int(mes[:4]), int(mes[4:])
+    return (hoje.year - ano) * 12 + (hoje.month - m) > meses_revisao
+
+
+def coletar_bolsa_familia(
+    ctx: Contexto, cliente: ClienteHttp, alvos: pl.DataFrame, sal: str | None = None
+) -> pl.DataFrame:
+    """Saques do Novo Bolsa Família só das pessoas em ``alvos`` (coluna ``id_pessoa``).
+
+    Os alvos são sócios PF, doadores PF e fornecedores PF de campanha. Cada registro da
+    API é comparado pelo ``id_pessoa`` (miolo do CPF + nome normalizado) e descartado na
+    hora se não coincidir: nem o NIS nem os demais beneficiários são gravados.
+
+    Retomada: cada mês grava um manifesto e as correspondências. Um mês fechado já lido
+    com o mesmo conjunto de alvos não é lido de novo. Mês sem dados (ainda não
+    publicado) não gera manifesto.
     """
     municipio, _ = ctx.config.piloto.exigir_definido()
-    meses = ctx.config.ingestao.transparencia.bolsa_familia_meses
-    destino = ctx.silver(FONTE) / "bolsa_familia_socios.parquet"
-    if not meses:
-        log.info("Nenhum mês de Bolsa Família configurado; etapa ignorada.")
-        return pl.DataFrame(
-            schema={"id_pessoa": pl.String, "mes": pl.String, "valor_total": pl.Float64}
-        )
-    ids_alvo = set(socios["id_pessoa"].drop_nulls().to_list())
+    ids_alvo = set(alvos["id_pessoa"].drop_nulls().to_list())
+    assinatura = _assinatura(ids_alvo)
+    pasta = ctx.bronze(FONTE, "bolsa_familia")
+    url = f"{URL_API}/novo-bolsa-familia-sacado-beneficiario-por-municipio"
     linhas: list[dict[str, Any]] = []
-    for mes in meses:
-        manifesto = ctx.bronze(FONTE, "bolsa_familia") / f"{mes}.manifesto.json"
+    for mes in meses_bolsa_familia(ctx):
+        manifesto = pasta / f"{mes}.manifesto.json"
+        achados_arq = pasta / f"{mes}.correspondencias.json"
+        if manifesto.exists() and achados_arq.exists() and _mes_fechado(mes, ctx.hoje()):
+            info = json.loads(manifesto.read_text(encoding="utf-8"))
+            if info.get("alvos_sha256") == assinatura:
+                linhas.extend(json.loads(achados_arq.read_text(encoding="utf-8")))
+                continue
         n_registros, achados = 0, []
         pagina = 1
         while True:
             lote = cliente.get_json(
-                f"{URL_API}/novo-bolsa-familia-sacado-beneficiario-por-municipio",
-                params={"mesAno": mes, "codigoIbge": municipio, "pagina": pagina},
+                url, params={"mesAno": mes, "codigoIbge": municipio, "pagina": pagina}
             )
             if not lote:
                 break
@@ -198,6 +230,10 @@ def coletar_bolsa_familia(
                         }
                     )
             pagina += 1
+        if n_registros == 0:
+            log.info("Bolsa Família %s: sem dados publicados.", mes)
+            continue
+        achados_arq.write_text(json.dumps(achados), encoding="utf-8")
         manifesto.write_text(
             json.dumps(
                 {
@@ -206,28 +242,28 @@ def coletar_bolsa_familia(
                     "paginas": pagina - 1,
                     "registros_lidos": n_registros,
                     "correspondencias": len(achados),
-                    "observacao": "Respostas não armazenadas (minimização LGPD).",
+                    "alvos": len(ids_alvo),
+                    "alvos_sha256": assinatura,
+                    "observacao": "Só correspondências com os alvos são guardadas (LGPD).",
                 },
                 ensure_ascii=False,
             ),
             encoding="utf-8",
         )
         ctx.linhagem.registrar(
-            FONTE,
-            f"{URL_API}/novo-bolsa-familia-sacado-beneficiario-por-municipio"
-            f"?mesAno={mes}&codigoIbge={municipio}",
-            manifesto,
-            ctx.agora(),
+            FONTE, f"{url}?mesAno={mes}&codigoIbge={municipio}", manifesto, ctx.agora()
         )
         linhas.extend(achados)
-        log.info("Bolsa Família %s: %d registros, %d sócios", mes, n_registros, len(achados))
+        log.info(
+            "Bolsa Família %s: %d registros, %d correspondências", mes, n_registros, len(achados)
+        )
     df = (
         pl.DataFrame(linhas, schema={"id_pessoa": pl.String, "mes": pl.String, "valor": pl.Float64})
         .group_by("id_pessoa", "mes")
         .agg(valor_total=pl.col("valor").sum())
         .sort("id_pessoa", "mes")
     )
-    gravar_parquet(df, destino)
+    gravar_parquet(df, ctx.silver(FONTE) / "bolsa_familia_cruzamentos.parquet")
     return df
 
 

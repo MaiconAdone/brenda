@@ -36,6 +36,7 @@ ELEITOS = ["ELEITO", "ELEITO POR QP", "ELEITO POR MÉDIA"]
 NATUREZAS_EXCLUIDAS = ("2011", "2038", "2046", "2151")
 URL_RECEITA = "https://arquivos.receitafederal.gov.br/index.php/s/gn672Ad4CF8N6TK"
 URL_TSE = "https://dadosabertos.tse.jus.br/"
+URL_BOLSA_FAMILIA = "https://portaldatransparencia.gov.br/beneficios/novo-bolsa-familia"
 
 
 def raiz(coluna: str) -> pl.Expr:
@@ -203,8 +204,33 @@ def derivar(t: Tabelas) -> dict[str, pl.DataFrame]:
         nomes.append(empresas.select(entidade=pl.lit("Empresa:") + pl.col("id"), nome="nome"))
     if (pessoas := t.get("grafo/nos/Pessoa")) is not None:
         nomes.append(pessoas.select(entidade=pl.lit("Pessoa:") + pl.col("id"), nome="nome"))
+    if (candidaturas := t.get("grafo/nos/Candidatura")) is not None:
+        nomes.append(
+            candidaturas.select(
+                entidade=pl.lit("Candidatura:") + pl.col("id"),
+                nome=pl.concat_str(
+                    pl.col("nome"), pl.lit(" ("), pl.col("cargo").str.to_lowercase(),
+                    pl.lit(" "), pl.col("ano_eleicao").cast(pl.String), pl.lit(")"),
+                ),
+            )
+        )  # fmt: skip
     if nomes:
         d["derivado/nomes"] = pl.concat(nomes).unique("entidade")
+
+    if (bolsa := t.get("transparencia/bolsa_familia_cruzamentos")) is not None:
+        d["derivado/beneficios"] = (
+            bolsa.sort("mes")
+            .group_by("id_pessoa")
+            .agg(
+                pl.col("mes").alias("meses"),
+                pl.len().alias("n_meses"),
+                pl.col("mes").first().alias("primeiro_mes"),
+                pl.col("mes").last().alias("ultimo_mes"),
+                pl.col("valor_total").sum().alias("total_recebido"),
+            )
+            .with_columns(pessoa=pl.lit("Pessoa:") + pl.col("id_pessoa"))
+            .select("pessoa", "meses", "n_meses", "primeiro_mes", "ultimo_mes", "total_recebido")
+        )
     return d
 
 

@@ -3,8 +3,8 @@
 Ordem de dependência::
 
     ibge ─┐
-    pncp ─┴─► receita_cnpj ─► sancoes ─► bolsa_familia
-    tse   (independente)
+    pncp ─┴─► receita_cnpj ─► sancoes
+    tse ──────────────┴──────────► bolsa_familia
 """
 
 from __future__ import annotations
@@ -100,17 +100,28 @@ def etapa_sancoes(ctx: Contexto) -> Resultado:
     )
 
 
+def alvos_bolsa_familia(ctx: Contexto) -> pl.DataFrame:
+    """Pessoas a procurar no Bolsa Família: sócios PF, doadores PF e fornecedores PF de campanha."""
+    ids: set[str] = set()
+    for caminho, coluna in (
+        (ctx.silver("receita_cnpj") / "socios.parquet", "id_pessoa"),
+        (ctx.silver("tse") / "receitas.parquet", "doador_id_pessoa"),
+        (ctx.silver("tse") / "despesas.parquet", "fornecedor_id_pessoa"),
+    ):
+        if caminho.exists():
+            ids |= set(pl.read_parquet(caminho, columns=[coluna])[coluna].drop_nulls().to_list())
+    return pl.DataFrame({"id_pessoa": sorted(ids)}, schema={"id_pessoa": pl.String})
+
+
 def etapa_bolsa_familia(ctx: Contexto) -> Resultado:
-    """Sócios PF beneficiários do Novo Bolsa Família (requer chave da API)."""
-    socios = ctx.silver("receita_cnpj") / "socios.parquet"
+    """Sócios, doadores e fornecedores PF de campanha que receberam Novo Bolsa Família."""
+    alvos = alvos_bolsa_familia(ctx)
     cliente = transparencia.cliente_api(ctx)
-    if cliente is None or not socios.exists():
+    if cliente is None or alvos.is_empty():
         return Resultado({}, [])
     with cliente:
-        df = transparencia.coletar_bolsa_familia(
-            ctx, cliente, pl.read_parquet(socios, columns=["id_pessoa"])
-        )
-    return Resultado({"transparencia/bolsa_familia_socios": df}, [])
+        df = transparencia.coletar_bolsa_familia(ctx, cliente, alvos)
+    return _verificar({"transparencia/bolsa_familia_cruzamentos": df})
 
 
 def etapa_tse(ctx: Contexto) -> Resultado:

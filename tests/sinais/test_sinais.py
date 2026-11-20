@@ -128,3 +128,35 @@ def test_sem_cpf_aberto_nas_evidencias(tabelas: Tabelas) -> None:
         for alerta in _rodar(sinal_id, tabelas).values():
             for ev in alerta.evidencias:
                 assert not cpf.search(ev.descricao)
+
+
+def test_l01_socio_beneficiario(tabelas: Tabelas) -> None:
+    alertas = _rodar("L01", tabelas)
+    assert set(alertas) == {A, B}  # P1 é sócio das duas; C (S.A.) fica de fora
+    dados = alertas[A].evidencias[0].dados
+    assert dados["n_meses"] == 2 and dados["total_recebido"] == 1200.0
+    assert dados["meses_sobrepostos"] == 1  # recebia em 03/2025, mês da vitória L1
+    assert "Recebia o benefício" in alertas[A].evidencias[0].descricao
+
+
+def test_l05_beneficiario_em_empresa_de_alto_valor(tabelas: Tabelas) -> None:
+    assert set(_rodar("L05", tabelas)) == {A}  # B venceu só R$ 90 mil
+
+
+def test_l06_beneficiario_entrou_antes_da_licitacao(tabelas: Tabelas) -> None:
+    alertas = _rodar("L06", tabelas)
+    assert set(alertas) == {A}
+    # P1 entrou 28 dias e P2 14 dias antes da vitória L1
+    assert sorted(ev.dados["dias"] for ev in alertas[A].evidencias) == [14, 28]
+
+
+def test_l07_campanha_com_doador_beneficiario(tabelas: Tabelas) -> None:
+    alertas = _rodar("L07", tabelas)
+    assert set(alertas) == {"Candidatura:2024-9"}  # o alerta recai sobre a candidatura
+    assert "doou R$ 1.000,00" in alertas["Candidatura:2024-9"].evidencias[0].descricao
+
+
+def test_l08_campanha_pagou_beneficiario(tabelas: Tabelas) -> None:
+    alertas = _rodar("L08", tabelas)
+    assert set(alertas) == {"Candidatura:2024-9"}
+    assert "CABO P3" in alertas["Candidatura:2024-9"].evidencias[0].descricao

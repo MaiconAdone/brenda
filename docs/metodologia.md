@@ -71,10 +71,14 @@ em `tests/sinais/`). Execução: `uv run python -m lupa.signals`.
 | F04 | Endereço (prédio) com ≥ 5 empresas ativas | fachada | **ativo** | Centros empresariais e contabilidades geram falso positivo |
 | F05 | CNAE incompatível com o objeto | fachada | não implementado | Exige mapear o texto do objeto para CNAE |
 | F06 | Telefone/e-mail compartilhado entre fornecedoras do mesmo órgão | fachada | **ativo** | Ignora contatos usados por > 10 empresas (contadores, centrais) |
-| L01 | Sócio beneficiário de programa social | laranja | aguardando dados | Bolsa Família ainda não coletado |
+| L01 | Sócio de fornecedora recebeu Novo Bolsa Família | laranja | **ativo** | Ligação por miolo do CPF + nome; MEI de baixa renda pode receber legalmente |
 | L02 | Sócio PF em número anômalo de empresas (≥ p99 e ≥ 10) | laranja | **ativo** | Holdings e grupos familiares |
 | L03 | Sócio de até 20 ou mais de 80 anos + ≥ R$ 500 mil vencidos | laranja | **ativo** | QSA publica só a faixa etária |
 | L04 | ≥ 2 sócios entraram até 90 dias antes de uma vitória | laranja | **ativo** | Só a foto atual do QSA; saídas não aparecem |
+| L05 | L01 em empresa que venceu ≥ R$ 500 mil | laranja | **ativo** | Complementa o L01 |
+| L06 | Beneficiário entrou como sócio até 90 dias antes de uma vitória | laranja | **ativo** | Só a foto atual do QSA |
+| L07 | Candidatura recebeu doação de beneficiário (alerta na candidatura) | laranja | **ativo** | Pequenas doações de eleitores de baixa renda são legítimas |
+| L08 | Candidatura pagou pessoa física beneficiária (alerta na candidatura) | laranja | **ativo** | Cabos eleitorais de baixa renda são contratados legitimamente |
 | C01 | Sócio é agente político eleito no município (parcial) | conflito | **ativo (parcial)** | Servidores municipais não têm fonte aberta; cobre só eleitos |
 | C02 | Sócio compartilha endereço com servidor | conflito | não implementado | Sem fonte de servidores |
 | C03 | Sócio doou, ou empresa/sócio prestou serviço, à campanha de eleito | conflito | **ativo** | Doação é legal; aponta proximidade |
@@ -86,7 +90,21 @@ em `tests/sinais/`). Execução: `uv run python -m lupa.signals`.
 | E03 | Dispensas por valor (art. 75, I/II) que somam acima do limite em 90 dias | execução | **ativo** | Aproxima "mesma natureza" por órgão + fornecedor |
 | E04 | Vitória/contrato com sanção vigente que alcança o contratante | execução | **ativo** | Só sanções ainda listadas no CEIS/CNEP |
 
-São 14 sinais ativos (13 completos e o C01 parcial).
+São 19 sinais ativos (18 completos e o C01 parcial).
+
+### Cruzamentos com o Bolsa Família
+
+- Fonte: API do Portal da Transparência (`novo-bolsa-familia-sacado-beneficiario-por-municipio`),
+  todos os meses desde 03/2023. O CPF vem mascarado; a ligação usa miolo + nome.
+- **Minimização:** a coleta lê cada página e descarta na hora quem não é sócio, doador ou
+  fornecedor PF de campanha. NIS e demais beneficiários não são gravados.
+- Nos sinais de campanha (L07, L08) o alerta recai sobre a **candidatura**, nunca sobre o
+  beneficiário. Candidaturas ficam num **ranking separado** (`campanhas_top50.md`): doações
+  e pagamentos pequenos a pessoas de baixa renda costumam ser legítimos e, misturados,
+  tirariam espaço dos fornecedores.
+- **Não é possível** cruzar beneficiários com óbitos usando dados abertos: as bases com
+  identificação (SIRC, SISOBI) são restritas, e a base aberta de mortalidade (SIM) não traz
+  nome nem CPF. Esse controle é feito pela CGU e pelo MDS.
 
 ### Filtros comuns
 
@@ -107,9 +125,11 @@ São 14 sinais ativos (13 completos e o C01 parcial).
 ### Saídas
 
 - `data/gold/alertas/alertas.parquet`: um alerta por linha, com as evidências em JSON.
-- `data/gold/alertas/scores.parquet`: score e decomposição por entidade.
-- `data/gold/relatorios/top50.md`: ranking com evidências, fontes e limitações, marcado
-  como **não revisado** e de uso interno.
+- `data/gold/alertas/scores.parquet`: score e decomposição por entidade, com a coluna
+  `ranking` (`fornecedores` ou `campanhas`) e a posição dentro dele.
+- `data/gold/relatorios/top50.md` (fornecedores e pessoas) e
+  `data/gold/relatorios/campanhas_top50.md` (candidaturas): ranking com evidências, fontes e
+  limitações, marcado como **não revisado** e de uso interno.
 
 ## Avaliação
 
@@ -125,4 +145,6 @@ São 14 sinais ativos (13 completos e o C01 parcial).
 | 2026-11-17 | todos | — → valores iniciais | Calibração inicial por julgamento, a revisar com precisão@k |
 | 2026-11-18 | F06 | — → `max_empresas_por_contato: 10` | Contatos de contadores e centrais dominavam o sinal |
 | 2026-11-18 | L02 | — → `min_empresas: 10` | Piso para o corte por percentil |
+| 2026-11-19 | L01 | `valor_min_contratos` → (sem parâmetro) | Valor alto passou para o L05 |
+| 2026-11-19 | L05–L08 | — → 8 / 10 / 10 / 8 | Novos cruzamentos com o Bolsa Família |
 | 2026-11-18 | E03 | `margem_abaixo_limite` → `limites` por ano | Limites legais de dispensa por decreto |

@@ -25,9 +25,25 @@ def test_sinais_ponta_a_ponta(silver: Contexto) -> None:
     # 44555666 tem sanção (CEIS) em vigor, mas sem abrangência sobre o município.
     assert {"Empresa:11222333", "Empresa:44555666"} <= set(alertas["entidade"])
     assert "K04" in set(alertas["sinal_id"])
-    assert scores["posicao"].to_list() == list(range(1, scores.height + 1))
+    for _, grupo in scores.group_by("ranking"):
+        assert grupo["posicao"].to_list() == list(range(1, grupo.height + 1))
+    assert (silver.gold("relatorios") / "campanhas_top10.md").exists()
 
     relatorio = (silver.gold("relatorios") / "top10.md").read_text(encoding="utf-8")
     assert AVISO_LEGAL in relatorio
     assert "não revisado" in relatorio
     assert "https://pncp.gov.br/" in relatorio or "https://arquivos.receitafederal" in relatorio
+
+
+def test_candidaturas_ficam_em_ranking_separado() -> None:
+    from lupa.scoring import ScoreEntidade
+    from lupa.signals.executar import separar
+
+    def score(entidade: str, total: float) -> ScoreEntidade:
+        return ScoreEntidade(entidade, total, {}, ())
+
+    grupos = separar(
+        [score("Candidatura:2024-1", 30), score("Empresa:1", 20), score("Pessoa:p", 10)]
+    )
+    assert [s.entidade_id for s in grupos["fornecedores"]] == ["Empresa:1", "Pessoa:p"]
+    assert [s.entidade_id for s in grupos["campanhas"]] == ["Candidatura:2024-1"]

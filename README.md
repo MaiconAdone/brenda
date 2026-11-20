@@ -42,7 +42,8 @@ Entidades e grafo: `uv run python -m lupa.graph` (gera `data/gold/`). Para carre
 com o Docker Compose no ar: `uv run python -m lupa.graph neo4j`.
 
 Sinais e score: `uv run python -m lupa.signals [--top 50]` gera os alertas e o relatório
-`data/gold/relatorios/top50.md` (uso interno, revisão humana obrigatória).
+`data/gold/relatorios/top50.md`, mais `campanhas_top50.md` para candidaturas (uso interno,
+revisão humana obrigatória).
 
 Sem `make`: `uv run pytest`, `uv run ruff check .`, `uv run mypy`,
 `uv run uvicorn lupa.api.main:app`, `uv run streamlit run src/lupa/ui/app.py`,
@@ -63,7 +64,7 @@ Sem `make`: `uv run pytest`, `uv run ruff check .`, `uv run mypy`,
 - [x] Fase 0: fundação
 - [x] Fase 1: ingestão (IBGE, PNCP, CNPJ, CEIS/CNEP, Bolsa Família, TSE) — piloto Mauá/SP
 - [x] Fase 2: entidades (Splink) e grafo (NetworkX; carga no Neo4j)
-- [x] Fase 3: 14 sinais, score por regras e relatório dos 50 principais alertas
+- [x] Fase 3: 19 sinais (inclui cruzamentos com o Bolsa Família), score por regras e relatório dos 50 principais alertas
 - [ ] Fase 4: interface e dossiê
 - [ ] Fase 5: ML (anomalias, comunidades, SHAP)
 - [ ] Fase 6: escala

@@ -86,3 +86,49 @@ def test_bolsa_familia_guarda_so_socios(ctx: Contexto, cliente_falso: Fabrica) -
         encoding="utf-8"
     )
     assert "PESSOA ALHEIA" not in manifesto and '"registros_lidos": 2' in manifesto
+
+
+def test_bolsa_familia_todos_os_meses(ctx: Contexto) -> None:
+    ctx.config.ingestao.transparencia.bolsa_familia_desde = "202511"
+    assert transparencia.meses_bolsa_familia(ctx) == [
+        "202511",
+        "202512",
+        "202601",
+        "202602",
+        "202603",
+    ]
+
+
+def test_bolsa_familia_retoma_meses_fechados(ctx: Contexto, cliente_falso: Fabrica) -> None:
+    ctx.config.ingestao.transparencia.bolsa_familia_meses = ["202501", "202603", "202604"]
+    alvo = id_pessoa(CPF_SOCIO, "José Sintético", SAL_TESTE)
+    chamadas: list[str] = []
+
+    def manipulador(req: httpx.Request) -> httpx.Response:
+        mes = req.url.params["mesAno"]
+        chamadas.append(mes)
+        if req.url.params["pagina"] != "1" or mes == "202604":  # 202604 ainda não publicado
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json=[
+            {"beneficiarioNovoBolsaFamilia": {"cpfFormatado": "***.456.789-**",
+                                              "nome": "JOSE SINTETICO", "nis": "123"},
+             "valorSaque": 600.0},
+        ])  # fmt: skip
+
+    alvos = pl.DataFrame({"id_pessoa": [alvo]})
+    df = transparencia.coletar_bolsa_familia(ctx, cliente_falso(manipulador), alvos)
+    assert df["mes"].to_list() == ["202501", "202603"]
+    pasta = ctx.bronze("transparencia", "bolsa_familia")
+    assert not (pasta / "202604.manifesto.json").exists()
+    assert "123" not in (pasta / "202501.correspondencias.json").read_text(encoding="utf-8")
+
+    chamadas.clear()
+    df2 = transparencia.coletar_bolsa_familia(ctx, cliente_falso(manipulador), alvos)
+    assert df2.equals(df)
+    assert "202501" not in chamadas  # fechado e com os mesmos alvos: não relê
+    assert "202603" in chamadas  # recente: relê
+
+    chamadas.clear()
+    outros = pl.DataFrame({"id_pessoa": [alvo, "outro"]})
+    transparencia.coletar_bolsa_familia(ctx, cliente_falso(manipulador), outros)
+    assert "202501" in chamadas  # alvos mudaram: relê

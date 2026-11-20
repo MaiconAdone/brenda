@@ -109,7 +109,14 @@ def tabelas() -> dict[str, pl.DataFrame]:
         "grafo/nos/Empresa": pl.DataFrame({
             "id": ["11111111", "33333333", "22222222"], "nome": ["EMPRESA A", "EMPRESA B", "C SA"],
         }),
-        "grafo/nos/Pessoa": pl.DataFrame({"id": [P1, P2], "nome": ["SOCIO P1", "SOCIO P2"]}),
+        "grafo/nos/Pessoa": pl.DataFrame({
+            "id": [P1, P2, P3], "nome": ["SOCIO P1", "SOCIO P2", "CABO P3"],
+            "documento": ["***.111.111-**", "***.222.222-**", "***.333.333-**"],
+        }),
+        "transparencia/bolsa_familia_cruzamentos": pl.DataFrame({
+            "id_pessoa": [P1, P1, P2, P3], "mes": ["202502", "202503", "202401", "202405"],
+            "valor_total": [600.0, 600.0, 650.0, 700.0],
+        }),
         "grafo/nos/Estabelecimento": pl.DataFrame({
             "id": ["11111111000100", "33333333000100", *[f"{i}" * 8 + "000100" for i in range(4, 8)]],
             "situacao_cadastral": ["02"] * 6,
@@ -140,6 +147,7 @@ def tabelas() -> dict[str, pl.DataFrame]:
         ]),
         "grafo/arestas/FORNECEU_CAMPANHA": pl.DataFrame([
             _aresta("33333333", "2024-9", "Empresa", "Candidatura", valor=5000.0),
+            _aresta(P3, "2024-9", "Pessoa", "Candidatura", valor=800.0),
         ]),
         "transparencia/sancoes": pl.DataFrame({
             "eh_pf": [False, False], "id_pessoa": [None, None],

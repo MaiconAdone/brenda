@@ -20,10 +20,14 @@ sinais:
   F05: {peso: 8,  ativo: true, parametros: {}}
   F06: {peso: 12, ativo: true, parametros: {max_empresas_por_contato: 10}}
   # Laranja
-  L01: {peso: 12, ativo: true, parametros: {valor_min_contratos: 500000}}
+  L01: {peso: 12, ativo: true, parametros: {}}  # sócio beneficiário do Bolsa Família
   L02: {peso: 8,  ativo: true, parametros: {percentil_anomalo: 0.99, min_empresas: 10}}
   L03: {peso: 6,  ativo: true, parametros: {valor_min_contratos: 500000}}
   L04: {peso: 8,  ativo: true, parametros: {janela_dias: 90, min_trocas: 2}}
+  L05: {peso: 8,  ativo: true, parametros: {valor_min_contratos: 500000}}  # beneficiário + alto valor
+  L06: {peso: 10, ativo: true, parametros: {janela_dias: 90}}  # beneficiário entrou antes de licitação
+  L07: {peso: 10, ativo: true, parametros: {}}  # campanha com doador beneficiário
+  L08: {peso: 8,  ativo: true, parametros: {}}  # campanha pagou PF beneficiária
   # Conflito de interesse
   C01: {peso: 20, ativo: true, parametros: {}}
   C02: {peso: 12, ativo: true, parametros: {}}

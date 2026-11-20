@@ -21,10 +21,12 @@ ingestao:
   tse:
     anos: [2020, 2024]         # eleições municipais no período
   transparencia:
-    # Meses (AAAAMM) consultados no Novo Bolsa Família. Lista curta por causa do
-    # limite de requisições da API; só sócios de empresas são mantidos (minimização).
-    bolsa_familia_meses: []    # ex.: ["202312", "202412", "202509"]; vazio = não coleta
-    intervalo_min_s: 0.7       # a API limita a ~90 req/min
+    # Novo Bolsa Família: lista vazia = todos os meses desde bolsa_familia_desde (o programa
+    # começou em 03/2023). Só pessoas que coincidem com sócios, doadores ou fornecedores PF
+    # de campanha são guardadas (minimização). A API limita 400 req/min de dia.
+    bolsa_familia_meses: []
+    bolsa_familia_desde: "202303"
+    intervalo_min_s: 0.2       # ~300 req/min (limite da API: 400 de dia, 700 de madrugada)
 
 finalidade: >
   Interesse público: identificar indícios de irregularidade em contratações públicas

@@ -21,7 +21,7 @@
 |---|---|
 | CPF | Só o miolo de 6 dígitos (o que as fontes publicam). Exibido como `***.123.456-**` via `lupa.cleaning.documentos.mascarar_cpf`. |
 | Identidade de pessoa | `lupa.privacidade.id_pessoa`: HMAC-SHA256 com sal secreto (`LUPA_SALT`) sobre miolo + nome normalizado. Não é reversível sem o sal. |
-| Benefícios sociais | Usados só como sinal booleano (L01), sem valor ou programa expostos na interface. |
+| Benefícios sociais | Só de quem é sócio, doador ou fornecedor PF de campanha; os demais beneficiários são descartados na leitura e o NIS nunca é gravado. Nos sinais de campanha, o alerta recai sobre a candidatura. |
 | Faixa etária | Só quando publicada pela fonte (QSA da Receita); nunca data de nascimento. |
 | Telefone e e-mail | No grafo viram HMAC com sal (`lupa.privacidade.hash_contato`): permitem achar contatos compartilhados sem guardar o contato. |
 | Miolo do CPF na resolução | Lido do CPF mascarado só em memória, durante o Splink; não é gravado à parte. |

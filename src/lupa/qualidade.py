@@ -160,6 +160,9 @@ ESPECIFICACOES: dict[str, Especificacao] = {
                                   sem_cpf_aberto=("doador_documento",), minimo_linhas=0),
     "tse/despesas": Especificacao(nao_nulos=("sq_candidato",), nao_negativos=("valor",),
                                   sem_cpf_aberto=("fornecedor_documento",), minimo_linhas=0),
+    "transparencia/bolsa_familia_cruzamentos": Especificacao(
+        chave=("id_pessoa", "mes"), nao_nulos=("id_pessoa", "mes"),
+        nao_negativos=("valor_total",), minimo_linhas=0),
     "entidades/pessoas": Especificacao(chave=("no_id",), nao_nulos=("no_id", "origens"),
                                        sem_cpf_aberto=("documento",)),
     "entidades/ligacoes": Especificacao(chave=("id_a", "id_b"),

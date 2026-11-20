@@ -18,6 +18,8 @@ def _nome(entidade: str, nomes: dict[str, str]) -> str:
     nome = nomes.get(entidade) or "(sem nome)"
     if tipo == "Empresa":
         return f"{nome} — CNPJ raiz {ident}"
+    if tipo == "Candidatura":
+        return f"{nome} — candidatura {ident}"
     return f"{nome} — pessoa física (id {ident[:8]}…)"
 
 
@@ -27,6 +29,7 @@ def gerar_relatorio(
     t: Mapping[str, pl.DataFrame],
     top: int = 50,
     gerado_em: date | None = None,
+    titulo: str = "principais alertas",
 ) -> str:
     """Ranking das ``top`` entidades com todas as evidências e fontes."""
     nomes_df = t.get("derivado/nomes")
@@ -36,7 +39,7 @@ def gerar_relatorio(
     selecionados = scores[:top]
     contagem = Counter(a.sinal_id for s in scores for a in s.alertas)
     linhas = [
-        f"# Lupa Cidadã — {top} principais alertas",
+        f"# Lupa Cidadã — {top} {titulo}",
         "",
         f"> **{AVISO_LEGAL}**",
         ">",

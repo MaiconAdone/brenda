@@ -53,11 +53,11 @@ DEPENDENCIAS = {
     "tse": ["ibge"],
     "receita_cnpj": ["pncp"],
     "sancoes": ["receita_cnpj"],
-    "bolsa_familia": ["receita_cnpj"],
+    "bolsa_familia": ["receita_cnpj", "tse"],
     "entidades": ["pncp", "tse", "receita_cnpj", "sancoes"],
     "grafo": ["entidades"],
     "neo4j": ["grafo"],
-    "sinais": ["grafo"],
+    "sinais": ["grafo", "bolsa_familia"],
 }
 
 GRUPOS = {"entidades": "grafo", "grafo": "grafo", "neo4j": "neo4j", "sinais": "sinais"}
