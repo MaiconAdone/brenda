@@ -1,11 +1,17 @@
-# Escopo do piloto. A ingestão recusa rodar enquanto o município não for definido.
+# Escopo. A ingestão recusa rodar enquanto ele não for definido.
 piloto:
-  # Código IBGE de 7 dígitos do município.
-  municipio_ibge: "3529401"   # Mauá
   uf: SP
-  nome_municipio: MAUA        # nome normalizado (sem acento, caixa alta), usado no TSE
-  # Código de município da Receita Federal (tabela Municipios do CNPJ; difere do IBGE).
-  municipio_receita: "6689"
+  # Municípios (códigos IBGE de 7 dígitos). Nomes e códigos da Receita/TSE são obtidos
+  # automaticamente. Para a UF inteira: municipios: [] e estado_inteiro: true.
+  municipios:
+    - "3547809"   # Santo André
+    - "3548708"   # São Bernardo do Campo
+    - "3548807"   # São Caetano do Sul
+    - "3513801"   # Diadema
+    - "3529401"   # Mauá
+    - "3543303"   # Ribeirão Pires
+    - "3544103"   # Rio Grande da Serra
+  estado_inteiro: false
   # Período analisado: últimos N anos a partir da data de referência.
   periodo_anos: 4
   # Data de referência (AAAA-MM-DD). null = hoje.
@@ -15,18 +21,27 @@ ingestao:
   pncp:
     # Modalidades da Lei 14.133 (tabela de domínio do PNCP), 1 a 13.
     modalidades: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
-    intervalo_min_s: 0.25      # pausa mínima entre requisições
+    intervalo_min_s: 1.0       # API de consulta: limita por IP (429); o ritmo se ajusta
+    intervalo_itens_s: 0.1     # API de itens/resultados (sem limite observado)
+    # Itens e vencedores: "todos" (ABC) ou "seletivo" (estado inteiro: só contratações a partir
+    # de itens_valor_min ou ligadas a fornecedores com alerta; o resto vem dos contratos).
+    itens: todos
+    itens_valor_min: 500000
+    max_orgaos_contratos: 300  # acima disto, contratos são varridos no país inteiro
+    trabalhadores: 8           # itens/resultados simultâneos (resposta ~2 s cada)
+    trabalhadores_consulta: 2  # contratações e contratos (janelas anuais)
   receita_cnpj:
     mes: null                  # "AAAA-MM"; null = mais recente disponível
   tse:
     anos: [2020, 2024]         # eleições municipais no período
   transparencia:
     # Novo Bolsa Família: lista vazia = todos os meses desde bolsa_familia_desde (o programa
-    # começou em 03/2023). Só pessoas que coincidem com sócios, doadores ou fornecedores PF
-    # de campanha são guardadas (minimização). A API limita 400 req/min de dia.
+    # começou em 03/2023). Usa o arquivo mensal nacional do Portal (~360 MB por mês, apagado
+    # depois da leitura). Só pessoas que coincidem com sócios, doadores ou fornecedores PF
+    # de campanha são guardadas (minimização).
     bolsa_familia_meses: []
     bolsa_familia_desde: "202303"
-    intervalo_min_s: 0.2       # ~300 req/min (limite da API: 400 de dia, 700 de madrugada)
+    intervalo_min_s: 0.2
 
 finalidade: >
   Interesse público: identificar indícios de irregularidade em contratações públicas

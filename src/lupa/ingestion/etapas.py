@@ -50,10 +50,14 @@ def etapa_ibge(ctx: Contexto) -> Resultado:
 
 def etapa_pncp(ctx: Contexto) -> Resultado:
     """Contratações, itens, resultados e contratos."""
-    with ClienteHttp(intervalo_min_s=ctx.config.ingestao.pncp.intervalo_min_s) as cliente:
-        pncp.coletar_contratacoes(ctx, cliente)
-        pncp.coletar_itens(ctx, cliente)
-        pncp.coletar_contratos(ctx, cliente)
+    cfg = ctx.config.ingestao.pncp
+    # A API de consulta limita requisições por IP; a de itens/resultados, não. Clientes
+    # separados para que o ritmo reduzido de uma não freie a outra.
+    with ClienteHttp(intervalo_min_s=cfg.intervalo_min_s) as consulta:
+        pncp.coletar_contratacoes(ctx, consulta)
+        with ClienteHttp(intervalo_min_s=cfg.intervalo_itens_s) as api:
+            pncp.coletar_itens(ctx, api)
+        pncp.coletar_contratos(ctx, consulta)
     itens, resultados = pncp.silver_itens_resultados(ctx)
     return _verificar(
         {
@@ -101,25 +105,48 @@ def etapa_sancoes(ctx: Contexto) -> Resultado:
 
 
 def alvos_bolsa_familia(ctx: Contexto) -> pl.DataFrame:
-    """Pessoas a procurar no Bolsa Família: sócios PF, doadores PF e fornecedores PF de campanha."""
-    ids: set[str] = set()
-    for caminho, coluna in (
-        (ctx.silver("receita_cnpj") / "socios.parquet", "id_pessoa"),
-        (ctx.silver("tse") / "receitas.parquet", "doador_id_pessoa"),
-        (ctx.silver("tse") / "despesas.parquet", "fornecedor_id_pessoa"),
-    ):
+    """Pessoas a procurar no Bolsa Família: sócios PF, doadores PF e fornecedores PF de campanha.
+
+    Colunas ``id_pessoa``, ``miolo`` e ``nome_normalizado`` (o CPF já vem mascarado da silver).
+    """
+    partes = []
+    for caminho, doc, nome, pid in (
+        (ctx.silver("receita_cnpj") / "socios.parquet", "socio_documento", "nome_normalizado",
+         "id_pessoa"),
+        (ctx.silver("tse") / "receitas.parquet", "doador_documento", "doador_nome_normalizado",
+         "doador_id_pessoa"),
+        (ctx.silver("tse") / "despesas.parquet", "fornecedor_documento",
+         "fornecedor_nome_normalizado", "fornecedor_id_pessoa"),
+    ):  # fmt: skip
         if caminho.exists():
-            ids |= set(pl.read_parquet(caminho, columns=[coluna])[coluna].drop_nulls().to_list())
-    return pl.DataFrame({"id_pessoa": sorted(ids)}, schema={"id_pessoa": pl.String})
+            df = pl.read_parquet(caminho, columns=[doc, nome, pid])
+            partes.append(
+                df.select(
+                    id_pessoa=pl.col(pid),
+                    miolo=transparencia.miolo_expr(doc),
+                    nome_normalizado=pl.col(nome),
+                )
+            )
+    vazio = pl.DataFrame(
+        schema={"id_pessoa": pl.String, "miolo": pl.String, "nome_normalizado": pl.String}
+    )
+    if not partes:
+        return vazio
+    return (
+        pl.concat(partes)
+        .drop_nulls()
+        .filter(pl.col("miolo").str.len_chars() == 6)
+        .unique("id_pessoa")
+        .sort("id_pessoa")
+    )
 
 
 def etapa_bolsa_familia(ctx: Contexto) -> Resultado:
     """Sócios, doadores e fornecedores PF de campanha que receberam Novo Bolsa Família."""
     alvos = alvos_bolsa_familia(ctx)
-    cliente = transparencia.cliente_api(ctx)
-    if cliente is None or alvos.is_empty():
+    if alvos.is_empty():
         return Resultado({}, [])
-    with cliente:
+    with ClienteHttp() as cliente:
         df = transparencia.coletar_bolsa_familia(ctx, cliente, alvos)
     return _verificar({"transparencia/bolsa_familia_cruzamentos": df})
 

@@ -107,12 +107,14 @@ def derivar(t: Tabelas) -> dict[str, pl.DataFrame]:
     d: dict[str, pl.DataFrame] = {}
     contratacoes = t.get("pncp/contratacoes")
     resultados = t.get("pncp/resultados")
+    if contratacoes is not None and "municipio_ibge" not in contratacoes.columns:
+        contratacoes = contratacoes.with_columns(municipio_ibge=pl.lit(None, pl.String))
     if contratacoes is not None and resultados is not None:
         d["derivado/vitorias"] = (
             resultados.join(
                 contratacoes.select(
                     "numero_controle_pncp", "orgao_cnpj", "orgao_nome", "orgao_esfera",
-                    "modalidade_id",
+                    "modalidade_id", "municipio_ibge",
                     "amparo_legal", "objeto", "url_fonte", "data_publicacao",
                 ),
                 on="numero_controle_pncp",
@@ -130,6 +132,7 @@ def derivar(t: Tabelas) -> dict[str, pl.DataFrame]:
                 pl.col("orgao_cnpj").first(),
                 pl.col("orgao_nome").first(),
                 pl.col("orgao_esfera").first(),
+                pl.col("municipio_ibge").first(),
                 pl.col("modalidade_id").first(),
                 pl.col("amparo_legal").first(),
                 pl.col("objeto").first(),
@@ -138,8 +141,14 @@ def derivar(t: Tabelas) -> dict[str, pl.DataFrame]:
                 pl.col("valor_total_homologado").sum().cast(pl.Float64).alias("valor"),
             )
             .filter(pl.col("entidade").is_not_null())
-            .sort("entidade", "data")
+            .with_columns(origem=pl.lit("resultado"))
         )  # fmt: skip
+        extra = _vitorias_de_contratos(
+            t.get("pncp/contratos"), contratacoes, d["derivado/vitorias"]
+        )
+        d["derivado/vitorias"] = pl.concat(
+            [d["derivado/vitorias"], extra], how="diagonal_relaxed"
+        ).sort("entidade", "data")
         if (empresas := t.get("receita_cnpj/empresas")) is not None:
             d["derivado/vitorias"] = d["derivado/vitorias"].join(
                 empresas.select(
@@ -159,6 +168,11 @@ def derivar(t: Tabelas) -> dict[str, pl.DataFrame]:
             controle=pl.col("numero_controle_pncp"),
             orgao_cnpj=pl.col("orgao_cnpj"),
             orgao_nome=pl.col("orgao_nome"),
+            municipio_ibge=(
+                pl.col("municipio_ibge")
+                if "municipio_ibge" in contratos.columns
+                else pl.lit(None, pl.String)
+            ),
             objeto=pl.col("objeto"),
             data=pl.col("data_assinatura").cast(pl.Date),
             valor_inicial=pl.col("valor_inicial").cast(pl.Float64),
@@ -232,6 +246,61 @@ def derivar(t: Tabelas) -> dict[str, pl.DataFrame]:
             .select("pessoa", "meses", "n_meses", "primeiro_mes", "ultimo_mes", "total_recebido")
         )
     return d
+
+
+def _vitorias_de_contratos(
+    contratos: pl.DataFrame | None, contratacoes: pl.DataFrame, vitorias: pl.DataFrame
+) -> pl.DataFrame:
+    """Vitórias vindas de contratos cuja licitação não tem vencedores coletados.
+
+    Com a coleta seletiva de itens (estado inteiro), boa parte das licitações não tem os
+    resultados; o contrato assinado diz quem venceu e por quanto. ``origem`` = "contrato".
+    """
+    if contratos is None or "numero_controle_compra" not in contratos.columns:
+        return pl.DataFrame()
+    com_resultado = vitorias["numero_controle_pncp"].unique().implode()
+    compras = contratacoes.select(
+        numero_controle_compra="numero_controle_pncp",
+        orgao_esfera="orgao_esfera", modalidade_id="modalidade_id",
+        amparo_legal="amparo_legal", url_compra="url_fonte",
+    )  # fmt: skip
+    return (
+        contratos.filter(
+            pl.col("numero_controle_compra").is_not_null()
+            & ~pl.col("numero_controle_compra").is_in(com_resultado)
+        )
+        .join(compras, on="numero_controle_compra", how="left")
+        .select(
+            entidade=entidade(
+                "fornecedor_tipo_pessoa", "fornecedor_documento", "fornecedor_id_pessoa"
+            ),
+            numero_controle_pncp=pl.col("numero_controle_compra"),
+            documento=pl.col("fornecedor_documento"),
+            nome=pl.col("fornecedor_nome_normalizado"),
+            orgao_cnpj="orgao_cnpj",
+            orgao_nome="orgao_nome",
+            orgao_esfera="orgao_esfera",
+            municipio_ibge=(
+                pl.col("municipio_ibge")
+                if "municipio_ibge" in contratos.columns
+                else pl.lit(None, pl.String)
+            ),
+            modalidade_id="modalidade_id",
+            amparo_legal="amparo_legal",
+            objeto="objeto",
+            url_fonte=pl.coalesce("url_compra", "url_fonte"),
+            data=pl.col("data_assinatura").cast(pl.Date),
+            valor=pl.col("valor_global").cast(pl.Float64),
+        )
+        .filter(pl.col("entidade").is_not_null())
+        .group_by("entidade", "numero_controle_pncp")
+        .agg(
+            pl.all().exclude("valor", "data").first(),
+            pl.col("data").min(),
+            pl.col("valor").sum(),
+        )
+        .with_columns(origem=pl.lit("contrato"))
+    )
 
 
 def elegiveis(v: pl.DataFrame) -> pl.DataFrame:

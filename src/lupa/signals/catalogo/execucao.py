@@ -217,10 +217,16 @@ class E04SancaoAtiva(Sinal):
                 if "orgao_esfera" in df.columns
                 else pl.lit(None, dtype=pl.String)
             )
+            municipio = (
+                pl.col("municipio_ibge")
+                if "municipio_ibge" in df.columns
+                else pl.lit(None, dtype=pl.String)
+            )
             eventos.append(
                 df.select(
                     "entidade", "orgao_nome", "url_fonte", "data", valor=pl.col(col_valor),
                     esfera_contratante=esfera, evento=pl.lit(evento),
+                    municipio_ibge=municipio,
                 )
             )  # fmt: skip
         if not eventos:
@@ -235,7 +241,7 @@ class E04SancaoAtiva(Sinal):
             abrangencia="abrangencia", arquivo_fonte="arquivo_fonte",
         )  # fmt: skip
         df = (
-            pl.concat(eventos)
+            _com_nome_municipio(t, pl.concat(eventos))
             .join(titulares, on="entidade")
             .filter(
                 (pl.col("data") >= pl.col("data_inicio"))
@@ -264,25 +270,47 @@ class E04SancaoAtiva(Sinal):
         )  # fmt: skip
 
 
+def _com_nome_municipio(t: Tabelas, df: pl.DataFrame) -> pl.DataFrame:
+    """Acrescenta ``municipio_contratante`` (nome normalizado) a partir do código IBGE.
+
+    Sem o código (dados antigos), usa o município único de ``meta/piloto``.
+    """
+    piloto = t.get("meta/piloto")
+    padrao = (
+        piloto["nome_municipio"][0]
+        if piloto is not None and piloto.height and "nome_municipio" in piloto.columns
+        else None
+    )
+    ibge = t.get("ibge/municipios")
+    if ibge is not None:
+        nomes = ibge.select("municipio_ibge", municipio_contratante="nome_normalizado")
+        df = df.join(nomes, on="municipio_ibge", how="left")
+    else:
+        df = df.with_columns(municipio_contratante=pl.lit(None, pl.String))
+    return df.with_columns(
+        pl.col("municipio_contratante").fill_null(pl.lit(padrao, dtype=pl.String))
+    )
+
+
 def _alcance(t: Tabelas) -> pl.Expr:
     """Confiança de que a sanção alcançava o órgão contratante (0 = não alcançava).
 
     - Todas as esferas: 1.
     - Restrita à esfera do sancionador: 1 se o contratante é do mesmo ente (o estado do
-      piloto, ou o próprio município); 0,8 quando também restrita ao poder, que não é
+      escopo, ou o município do contratante); 0,8 quando também restrita ao poder, que não é
       conferido.
-    - Só no órgão sancionador: 0,8 se o sancionador é do município do piloto.
+    - Só no órgão sancionador: 0,8 se o sancionador é do município do contratante.
     - Sem informação: 0,5.
     - Outros casos (ex.: sanção federal e contratante municipal): não dispara.
     """
     piloto = t.get("meta/piloto")
     uf = piloto["uf"][0] if piloto is not None and piloto.height else None
-    municipio = piloto["nome_municipio"][0] if piloto is not None and piloto.height else None
     abr = pl.col("abrangencia").fill_null("")
     contratante = pl.col("esfera_contratante").fill_null("")
     sancionador = pl.col("orgao_sancionador").fill_null("").str.to_uppercase()
-    do_municipio = (
-        sancionador.str.contains(municipio.upper(), literal=True) if municipio else pl.lit(False)
+    # O sancionador municipal é do mesmo município do contratante?
+    do_municipio = pl.col("municipio_contratante").is_not_null() & sancionador.str.contains(
+        pl.col("municipio_contratante").fill_null("\x00"), literal=True
     )
     mesmo_ente = (
         (pl.col("esfera_sancionador") == "ESTADUAL")

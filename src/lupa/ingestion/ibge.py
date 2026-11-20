@@ -1,4 +1,4 @@
-"""IBGE: municípios da UF do piloto (normalização e validação do código)."""
+"""IBGE: municípios da UF do escopo (normalização e validação dos códigos)."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ URL = "https://servicodados.ibge.gov.br/api/v1/localidades/estados/{uf}/municipi
 
 
 def coletar(ctx: Contexto, cliente: ClienteHttp) -> pl.DataFrame:
-    """Baixa os municípios da UF, grava bronze e silver e valida o piloto."""
-    municipio, uf = ctx.config.piloto.exigir_definido()
+    """Baixa os municípios da UF, grava bronze e silver e valida o escopo."""
+    codigos, uf = ctx.config.piloto.exigir_escopo()
     url = URL.format(uf=uf)
     dados = cliente.get_json(url) or []
     bruto = ctx.bronze(FONTE) / f"municipios_{uf}.json"
@@ -37,11 +37,13 @@ def coletar(ctx: Contexto, cliente: ClienteHttp) -> pl.DataFrame:
             "uf": pl.String,
         },
     )
-    if municipio not in set(df["municipio_ibge"]):
-        raise ValueError(f"Município {municipio} não encontrado no IBGE para {uf}.")
+    faltam = sorted(set(codigos) - set(df["municipio_ibge"]))
+    if faltam:
+        raise ValueError(f"Municípios {faltam} não encontrados no IBGE para {uf}.")
     nome_cfg = ctx.config.piloto.nome_municipio
-    nome_ibge = df.filter(pl.col("municipio_ibge") == municipio)["nome_normalizado"][0]
-    if nome_cfg and normalizar_nome(nome_cfg) != nome_ibge:
-        raise ValueError(f"nome_municipio '{nome_cfg}' difere do IBGE ('{nome_ibge}').")
+    if nome_cfg and len(codigos) == 1:
+        nome_ibge = df.filter(pl.col("municipio_ibge") == codigos[0])["nome_normalizado"][0]
+        if normalizar_nome(nome_cfg) != nome_ibge:
+            raise ValueError(f"nome_municipio '{nome_cfg}' difere do IBGE ('{nome_ibge}').")
     gravar_parquet(df, ctx.silver(FONTE) / "municipios.parquet")
     return df

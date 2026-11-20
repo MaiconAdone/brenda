@@ -172,27 +172,46 @@ class Base:
         else:
             base = base.with_columns(
                 orgaos=pl.lit(None, pl.List(pl.String)),
+                municipios=pl.lit(None, pl.List(pl.String)),
                 data_min=pl.lit(None, pl.Date),
                 data_max=pl.lit(None, pl.Date),
                 valor_total=pl.lit(None, pl.Float64),
             )
         return base.with_columns(
-            pl.col("orgaos").fill_null([]), pl.col("valor_total").fill_null(0.0)
+            pl.col("orgaos").fill_null([]),
+            pl.col("municipios").fill_null([]),
+            pl.col("valor_total").fill_null(0.0),
         )
 
     def _movimento(self) -> pl.DataFrame | None:
+        """Órgãos, municípios (do órgão contratante), período e valor por entidade."""
         partes = []
-        if (v := self.t.get("derivado/vitorias")) is not None:
-            partes.append(v.select("entidade", "orgao_nome", "data", "valor"))
-        if (c := self.t.get("derivado/contratos")) is not None:
-            partes.append(c.select("entidade", "orgao_nome", "data", valor=pl.lit(0.0)))
+        for tabela, valor in (("derivado/vitorias", "valor"), ("derivado/contratos", None)):
+            if (df := self.t.get(tabela)) is None:
+                continue
+            municipio = (
+                pl.col("municipio_ibge")
+                if "municipio_ibge" in df.columns
+                else pl.lit(None, pl.String)
+            )
+            partes.append(
+                df.select(
+                    "entidade", "orgao_nome", "data", municipio_ibge=municipio,
+                    valor=pl.col(valor) if valor else pl.lit(0.0),
+                )
+            )  # fmt: skip
         if not partes:
             return None
+        nomes = {}
+        if (ibge := self.t.get("ibge/municipios")) is not None:
+            nomes = dict(ibge.select("municipio_ibge", "nome").iter_rows())
         return (
             pl.concat(partes)
+            .with_columns(municipio=pl.col("municipio_ibge").replace_strict(nomes, default=None))
             .group_by("entidade")
             .agg(
                 pl.col("orgao_nome").drop_nulls().unique().sort().alias("orgaos"),
+                pl.col("municipio").drop_nulls().unique().sort().alias("municipios"),
                 pl.col("data").min().alias("data_min"),
                 pl.col("data").max().alias("data_max"),
                 pl.col("valor").sum().alias("valor_total"),

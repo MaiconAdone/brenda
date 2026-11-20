@@ -68,3 +68,24 @@ def test_download_incompleto_falha(cliente_falso: Fabrica, tmp_path: Path) -> No
     cliente = cliente_falso(lambda r: httpx.Response(200, content=b"abc"))
     with pytest.raises(OSError, match="incompleto"):
         cliente.baixar("https://x.invalid/a", tmp_path / "a", tamanho_esperado=10)
+
+
+def test_429_desacelera_e_depois_recupera(
+    cliente_falso: Fabrica, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lupa.ingestion import http
+
+    monkeypatch.setattr(http, "PAUSA_429_S", 0.0)
+    respostas = iter([429, 429, 200, 200])
+
+    def manipulador(_: httpx.Request) -> httpx.Response:
+        status = next(respostas)
+        return httpx.Response(status, json={"ok": 1} if status == 200 else None)
+
+    cliente = cliente_falso(manipulador)
+    assert cliente.get_json("https://x.invalid/a") == {"ok": 1}
+    assert cliente.n_429 == 2
+    lento = cliente._intervalo
+    assert lento > 0.9  # 0,5 → 1,0 nos dois 429 e um pouco menos após o sucesso
+    cliente.get_json("https://x.invalid/b")
+    assert cliente._intervalo < lento  # sucesso volta aos poucos ao mínimo

@@ -16,8 +16,8 @@ from pathlib import Path
 
 import polars as pl
 
+from lupa import escopo
 from lupa.cleaning.documentos import somente_digitos
-from lupa.cleaning.texto import normalizar_nome
 from lupa.ingestion.arquivos import extrair_utf8, gravar_parquet, ler_csv_texto, membros_zip
 from lupa.ingestion.contexto import Contexto
 from lupa.ingestion.http import ClienteHttp
@@ -132,11 +132,10 @@ def _pseudonimizar_doc(df: pl.DataFrame, col_doc: str, col_nome: str, prefixo: s
 
 
 def silver(ctx: Contexto) -> dict[str, pl.DataFrame]:
-    """Candidatos, receitas e despesas do município do piloto, todos os anos."""
-    _, uf = ctx.config.piloto.exigir_definido()
-    nome_municipio = normalizar_nome(ctx.config.piloto.nome_municipio or "")
-    if not nome_municipio:
-        raise ValueError("Defina 'nome_municipio' em piloto.yaml.")
+    """Candidatos, receitas e despesas dos municípios do escopo, todos os anos."""
+    codigos, uf = ctx.config.piloto.exigir_escopo()
+    # O TSE identifica o município pelo nome (NM_UE); compara pela chave sem espaços.
+    chaves = set(escopo.municipios(ctx)["chave"]) if codigos else None
     candidatos: list[pl.DataFrame] = []
     receitas: list[pl.DataFrame] = []
     despesas: list[pl.DataFrame] = []
@@ -150,13 +149,12 @@ def silver(ctx: Contexto) -> dict[str, pl.DataFrame]:
         bruto = _ler_membro(ctx, cand_zip, f"_{uf}.csv")
         if bruto is None:
             continue
-        cand = _selecionar(bruto, COLUNAS_CANDIDATO, cand_zip.name).filter(
-            (pl.col("uf") == uf)
-            & (
-                pl.col("nome_ue").map_elements(normalizar_nome, return_dtype=pl.String)
-                == nome_municipio
-            )
-        )
+        cand = _selecionar(bruto, COLUNAS_CANDIDATO, cand_zip.name).filter(pl.col("uf") == uf)
+        if chaves is not None:
+            cand = cand.filter(escopo.chave_expr("nome_ue").is_in(list(chaves)))
+            faltam = chaves - set(cand.select(escopo.chave_expr("nome_ue"))["nome_ue"])
+            if faltam:
+                log.warning("TSE %s: sem candidatos para %s", ano, sorted(faltam))
         candidatos.append(cand)
         sqs = cand["sq_candidato"].unique().implode()
         if contas_zip.exists():

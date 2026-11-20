@@ -4,10 +4,11 @@
   A data disponível é lida da própria página (só o arquivo do dia fica acessível).
   O CEIS publica CPF completo de pessoas físicas: no silver ele é mascarado e só são
   mantidas as PF que correspondem a sócios ou fornecedores do piloto.
-- **Novo Bolsa Família**: API ``/api-de-dados/novo-bolsa-familia-sacado-beneficiario-por-municipio``
-  (exige ``PORTAL_TRANSPARENCIA_API_KEY``). Por minimização, as respostas **não** são
-  gravadas: só os beneficiários que correspondem a sócios (miolo do CPF + nome) são
-  mantidos, como ``id_pessoa`` e mês. Um manifesto por mês registra a coleta na linhagem.
+- **Novo Bolsa Família**: arquivo mensal nacional em ``/download-de-dados/novo-bolsa-familia``
+  (não exige chave). Por minimização, o arquivo é apagado depois da leitura: só os
+  beneficiários que correspondem a sócios, doadores ou fornecedores PF de campanha
+  (miolo do CPF + nome) são mantidos, como ``id_pessoa``, mês e valor. Um manifesto por
+  mês registra a coleta na linhagem.
 """
 
 from __future__ import annotations
@@ -15,12 +16,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
 from datetime import date
 from pathlib import Path
 from typing import Any
 
+import httpx
 import polars as pl
 
 from lupa.cleaning.documentos import somente_digitos
@@ -34,7 +35,6 @@ log = logging.getLogger("lupa.ingestion.transparencia")
 
 FONTE = "transparencia"
 URL_DOWNLOAD = "https://portaldatransparencia.gov.br/download-de-dados"
-URL_API = "https://api.portaldatransparencia.gov.br/api-de-dados"
 CADASTROS_SANCAO = ("ceis", "cnep")
 
 # Cabeçalho normalizado (sem acento, caixa alta) → nome da coluna silver
@@ -150,11 +150,6 @@ def silver_sancoes(ctx: Contexto, ids_pessoas_relevantes: set[str] | None = None
 # --------------------------------------------------------------------- Bolsa Família
 
 
-def chave_api() -> str | None:
-    """Chave da API (``PORTAL_TRANSPARENCIA_API_KEY``) ou ``None``."""
-    return os.environ.get("PORTAL_TRANSPARENCIA_API_KEY") or None
-
-
 def meses_bolsa_familia(ctx: Contexto) -> list[str]:
     """Meses (AAAAMM) a consultar: os configurados ou todos desde ``bolsa_familia_desde``."""
     cfg = ctx.config.ingestao.transparencia
@@ -179,67 +174,110 @@ def _mes_fechado(mes: str, hoje: date, meses_revisao: int = 3) -> bool:
     return (hoje.year - ano) * 12 + (hoje.month - m) > meses_revisao
 
 
+URL_BOLSA_FAMILIA = f"{URL_DOWNLOAD}/novo-bolsa-familia/{{mes}}"
+COLUNAS_BOLSA_FAMILIA = [
+    "mes_competencia", "mes_referencia", "uf", "municipio_siafi", "municipio", "cpf", "nis",
+    "nome", "valor",
+]  # fmt: skip
+
+
+def miolo_expr(coluna: str) -> pl.Expr:
+    """Miolo do CPF (6 dígitos) a partir de CPF mascarado ou completo, vetorizado."""
+    d = pl.col(coluna).str.replace_all(r"\D", "")
+    return pl.when(d.str.len_chars() == 11).then(d.str.slice(3, 6)).otherwise(d)
+
+
+def nome_expr(coluna: str) -> pl.Expr:
+    """Mesmo resultado de :func:`lupa.cleaning.texto.normalizar_nome`, vetorizado."""
+    return (
+        pl.col(coluna)
+        .str.normalize("NFKD")
+        .str.replace_all(r"[^\x00-\x7F]", "")
+        .str.to_uppercase()
+        .str.replace_all(r"[^A-Z0-9 ]", " ")
+        .str.replace_all(r"\s+", " ")
+        .str.strip_chars()
+    )
+
+
 def coletar_bolsa_familia(
     ctx: Contexto, cliente: ClienteHttp, alvos: pl.DataFrame, sal: str | None = None
 ) -> pl.DataFrame:
-    """Saques do Novo Bolsa Família só das pessoas em ``alvos`` (coluna ``id_pessoa``).
+    """Pagamentos do Novo Bolsa Família só das pessoas em ``alvos``.
 
-    Os alvos são sócios PF, doadores PF e fornecedores PF de campanha. Cada registro da
-    API é comparado pelo ``id_pessoa`` (miolo do CPF + nome normalizado) e descartado na
-    hora se não coincidir: nem o NIS nem os demais beneficiários são gravados.
+    ``alvos`` tem ``id_pessoa``, ``miolo`` (6 dígitos do CPF) e ``nome_normalizado``: sócios
+    PF, doadores PF e fornecedores PF de campanha. Usa o arquivo mensal **nacional** do
+    Portal da Transparência (um ZIP de ~360 MB por mês): cada linha é comparada por miolo +
+    nome e descartada se não coincidir, e cada coincidência é conferida recalculando o
+    ``id_pessoa``. Nem o NIS nem os demais beneficiários são gravados, e o arquivo baixado é
+    apagado em seguida. Por ser nacional, acha também sócios que moram fora do escopo.
 
     Retomada: cada mês grava um manifesto e as correspondências. Um mês fechado já lido
-    com o mesmo conjunto de alvos não é lido de novo. Mês sem dados (ainda não
-    publicado) não gera manifesto.
+    com o mesmo conjunto de alvos não é lido de novo. Mês não publicado é pulado.
     """
-    municipio, _ = ctx.config.piloto.exigir_definido()
     ids_alvo = set(alvos["id_pessoa"].drop_nulls().to_list())
     assinatura = _assinatura(ids_alvo)
+    chaves = (
+        alvos.select("miolo", "nome_normalizado", "id_pessoa")
+        .drop_nulls()
+        .unique(["miolo", "nome_normalizado"])
+    )
+    miolos = chaves["miolo"].unique().implode()
     pasta = ctx.bronze(FONTE, "bolsa_familia")
-    url = f"{URL_API}/novo-bolsa-familia-sacado-beneficiario-por-municipio"
     linhas: list[dict[str, Any]] = []
     for mes in meses_bolsa_familia(ctx):
         manifesto = pasta / f"{mes}.manifesto.json"
         achados_arq = pasta / f"{mes}.correspondencias.json"
         if manifesto.exists() and achados_arq.exists() and _mes_fechado(mes, ctx.hoje()):
             info = json.loads(manifesto.read_text(encoding="utf-8"))
-            if info.get("alvos_sha256") == assinatura:
+            if info.get("alvos_sha256") == assinatura and info.get("origem") == "arquivo":
                 linhas.extend(json.loads(achados_arq.read_text(encoding="utf-8")))
                 continue
-        n_registros, achados = 0, []
-        pagina = 1
-        while True:
-            lote = cliente.get_json(
-                url, params={"mesAno": mes, "codigoIbge": municipio, "pagina": pagina}
-            )
-            if not lote:
-                break
-            for registro in lote:
-                n_registros += 1
-                benef = registro.get("beneficiarioNovoBolsaFamilia") or {}
-                try:
-                    pid = id_pessoa(benef.get("cpfFormatado") or "", benef.get("nome") or "", sal)
-                except ValueError:
+        url = URL_BOLSA_FAMILIA.format(mes=mes)
+        zip_path = pasta / "_tmp" / f"{mes}.zip"
+        csv_path = pasta / "_tmp" / f"{mes}.csv"
+        try:
+            try:
+                cliente.baixar(url, zip_path)
+            except httpx.HTTPStatusError as erro:
+                if erro.response.status_code in (403, 404):
+                    log.info("Bolsa Família %s: arquivo ainda não publicado.", mes)
                     continue
-                if pid in ids_alvo:
-                    achados.append(
-                        {
-                            "id_pessoa": pid,
-                            "mes": mes,
-                            "valor": float(registro.get("valorSaque") or 0),
-                        }
-                    )
-            pagina += 1
-        if n_registros == 0:
-            log.info("Bolsa Família %s: sem dados publicados.", mes)
-            continue
+                raise
+            extrair_utf8(zip_path, csv_path)
+            zip_path.unlink()
+            lf = ler_csv_texto(csv_path, COLUNAS_BOLSA_FAMILIA, cabecalho=True)
+            n_registros = int(lf.select(pl.len()).collect().item())
+            candidatos = (
+                lf.filter(miolo_expr("cpf").is_in(miolos))
+                .with_columns(miolo=miolo_expr("cpf"), nome_normalizado=nome_expr("nome"))
+                .join(chaves.lazy(), on=["miolo", "nome_normalizado"])
+                .select(
+                    "id_pessoa", "cpf", "nome",
+                    mes=pl.col("mes_competencia"),
+                    valor=pl.col("valor").str.replace_all(r"\.", "").str.replace(",", ".")
+                    .cast(pl.Float64, strict=False),
+                )
+                .collect()
+            )  # fmt: skip
+        finally:
+            zip_path.unlink(missing_ok=True)
+            csv_path.unlink(missing_ok=True)
+        achados = [
+            {"id_pessoa": r["id_pessoa"], "mes": r["mes"], "valor": r["valor"] or 0.0}
+            for r in candidatos.iter_rows(named=True)
+            if id_pessoa(r["cpf"], r["nome"], sal) == r["id_pessoa"]
+        ]
+        if len(achados) != candidatos.height:
+            log.warning("Bolsa Família %s: %d coincidências descartadas na conferência do id.",
+                        mes, candidatos.height - len(achados))  # fmt: skip
         achados_arq.write_text(json.dumps(achados), encoding="utf-8")
         manifesto.write_text(
             json.dumps(
                 {
                     "mes": mes,
-                    "municipio_ibge": municipio,
-                    "paginas": pagina - 1,
+                    "origem": "arquivo",
+                    "url": url,
                     "registros_lidos": n_registros,
                     "correspondencias": len(achados),
                     "alvos": len(ids_alvo),
@@ -250,9 +288,7 @@ def coletar_bolsa_familia(
             ),
             encoding="utf-8",
         )
-        ctx.linhagem.registrar(
-            FONTE, f"{url}?mesAno={mes}&codigoIbge={municipio}", manifesto, ctx.agora()
-        )
+        ctx.linhagem.registrar(FONTE, url, manifesto, ctx.agora())
         linhas.extend(achados)
         log.info(
             "Bolsa Família %s: %d registros, %d correspondências", mes, n_registros, len(achados)
@@ -265,15 +301,3 @@ def coletar_bolsa_familia(
     )
     gravar_parquet(df, ctx.silver(FONTE) / "bolsa_familia_cruzamentos.parquet")
     return df
-
-
-def cliente_api(ctx: Contexto) -> ClienteHttp | None:
-    """Cliente com a chave da API, ou ``None`` se a chave não estiver configurada."""
-    chave = chave_api()
-    if not chave:
-        log.warning("PORTAL_TRANSPARENCIA_API_KEY não definida: Bolsa Família não será coletado.")
-        return None
-    return ClienteHttp(
-        intervalo_min_s=ctx.config.ingestao.transparencia.intervalo_min_s,
-        cabecalhos={"chave-api-dados": chave, "Accept": "application/json"},
-    )

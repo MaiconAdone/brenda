@@ -13,9 +13,11 @@ from dagster import (
     AssetExecutionContext,
     AssetsDefinition,
     AssetSelection,
+    DefaultScheduleStatus,
     Definitions,
     MaterializeResult,
     MetadataValue,
+    ScheduleDefinition,
     asset,
     define_asset_job,
 )
@@ -35,12 +37,12 @@ def configuracao_validada(context: AssetExecutionContext) -> MaterializeResult:
     """Falha cedo se a configuração estiver inválida."""
     ctx = contexto_padrao()
     regras = carregar_regras()
-    municipio, uf = ctx.config.piloto.exigir_definido()
+    codigos, uf = ctx.config.piloto.exigir_escopo()
     inicio, fim = ctx.config.piloto.periodo()
-    context.log.info(f"Piloto {municipio}/{uf}, {inicio} a {fim}")
+    context.log.info(f"Escopo {ctx.config.piloto.descricao()}, {inicio} a {fim}")
     return MaterializeResult(
         metadata={
-            "municipio_ibge": municipio,
+            "municipios_ibge": ", ".join(codigos) or "UF inteira",
             "uf": uf,
             "periodo": f"{inicio} a {fim}",
             "sinais_ativos": sum(s.ativo for s in regras.sinais.values()),
@@ -121,8 +123,26 @@ ingestao_completa = define_asset_job(
 grafo_completo = define_asset_job("grafo_completo", selection=AssetSelection.groups("grafo"))
 carga_neo4j = define_asset_job("carga_neo4j", selection=AssetSelection.groups("neo4j"))
 sinais_e_score = define_asset_job("sinais_e_score", selection=AssetSelection.groups("sinais"))
+# Tudo menos a carga no Neo4j (que exige o servidor no ar).
+atualizacao_completa = define_asset_job(
+    "atualizacao_completa",
+    selection=AssetSelection.groups("configuracao", "ingestao", "grafo", "sinais"),
+)
+
+# Atualização semanal (domingo, 3h de Brasília). Cada fonte é incremental: meses fechados
+# do PNCP e do Bolsa Família não são recoletados, o CNPJ só é baixado quando a Receita
+# publica um mês novo e o TSE só muda em ano de eleição. Começa desligado: ative na
+# interface do Dagster depois de conferir a primeira execução manual.
+atualizacao_semanal = ScheduleDefinition(
+    name="atualizacao_semanal",
+    job=atualizacao_completa,
+    cron_schedule="0 3 * * 0",
+    execution_timezone="America/Sao_Paulo",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
 
 defs = Definitions(
     assets=[configuracao_validada, *ASSETS],
-    jobs=[ingestao_completa, grafo_completo, carga_neo4j, sinais_e_score],
+    jobs=[ingestao_completa, grafo_completo, carga_neo4j, sinais_e_score, atualizacao_completa],
+    schedules=[atualizacao_semanal],
 )

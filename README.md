@@ -24,10 +24,13 @@ Requisitos: [uv](https://docs.astral.sh/uv/), Docker (opcional), `make` (opciona
 
 ```bash
 make setup              # ou: uv sync --extra api --extra ui --extra orquestracao --extra ml
-cp .env.example .env    # preencha LUPA_SALT e PORTAL_TRANSPARENCIA_API_KEY
+cp .env.example .env    # preencha LUPA_SALT
 ```
 
-Defina o município do piloto em [config/piloto.yaml](config/piloto.yaml) (`municipio_ibge`, `uf`).
+Defina o escopo em [config/piloto.yaml](config/piloto.yaml): `uf` e a lista `municipios`
+(códigos IBGE), ou `estado_inteiro: true`. O padrão é o Grande ABC paulista (7 municípios).
+Nomes e códigos da Receita e do TSE são obtidos automaticamente; município sem
+correspondência em alguma base interrompe a ingestão com a lista do que faltou.
 
 ```bash
 make test       # testes (somente dados sintéticos)
@@ -43,6 +46,10 @@ com o Docker Compose no ar: `uv run python -m lupa.graph neo4j`.
 
 Modelos de apoio (anomalias e núcleos de fornecedoras, extra `ml`): `uv run python -m lupa.ml`,
 antes dos sinais. Avaliação por precisão@k: `uv run python -m lupa.ml avaliacao`.
+
+Atualização agendada: o Dagster tem o job `atualizacao_completa` e a agenda
+`atualizacao_semanal` (domingo, 3h), que começa desligada; ative na interface do Dagster
+depois de conferir uma execução manual. Todas as fontes são incrementais.
 
 Sinais e score: `uv run python -m lupa.signals [--top 50]` gera os alertas e o relatório
 `data/gold/relatorios/top50.md`, mais `campanhas_top50.md` para candidaturas (uso interno,
@@ -75,7 +82,7 @@ Sem `make`: `uv run pytest`, `uv run ruff check .`, `uv run mypy`,
 - [x] Fase 3: 19 sinais (inclui cruzamentos com o Bolsa Família), score por regras e relatório dos 50 principais alertas
 - [x] Fase 4: interface (Streamlit), revisão humana, grafo de 2 saltos e dossiê em PDF
 - [x] Fase 5: anomalias (Isolation Forest + SHAP), núcleos de fornecedoras (Louvain) e precisão@k
-- [ ] Fase 6: escala
+- [x] Fase 6: escala (vários municípios ou UF inteira, PNCP seletivo, Bolsa Família pelo arquivo nacional, agendamento semanal)
 
 ## Licença
 

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -16,10 +17,19 @@ class PilotoNaoDefinidoError(RuntimeError):
 
 
 class Piloto(BaseModel):
-    """Escopo geográfico e temporal do piloto."""
+    """Escopo geográfico e temporal.
 
-    municipio_ibge: str | None = Field(default=None, pattern=r"^\d{7}$")
+    O escopo é uma lista de municípios (``municipios``, códigos IBGE) ou a UF inteira
+    (``estado_inteiro: true``). ``municipio_ibge`` é a forma antiga, de um município só, e
+    continua aceita. Nomes e códigos da Receita são obtidos do IBGE e das tabelas da
+    Receita; ``nome_municipio`` e ``municipio_receita`` só valem para conferir ou forçar o
+    código quando há um único município.
+    """
+
     uf: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
+    municipios: list[str] = Field(default_factory=list)
+    estado_inteiro: bool = False
+    municipio_ibge: str | None = Field(default=None, pattern=r"^\d{7}$")
     nome_municipio: str | None = None
     municipio_receita: str | None = Field(default=None, pattern=r"^\d{4}$")
     periodo_anos: int = Field(default=4, ge=1, le=20)
@@ -31,15 +41,45 @@ class Piloto(BaseModel):
         """Aceita códigos escritos como número no YAML."""
         return str(valor) if isinstance(valor, int) else valor
 
-    def exigir_definido(self) -> tuple[str, str]:
-        """Retorna ``(municipio_ibge, uf)`` ou falha com mensagem clara."""
-        if self.municipio_ibge is None or self.uf is None:
+    @field_validator("municipios", mode="before")
+    @classmethod
+    def _lista_texto(cls, valor: Any) -> Any:
+        if isinstance(valor, list):
+            return [str(v) for v in valor]
+        return valor
+
+    def codigos_ibge(self) -> list[str]:
+        """Municípios listados (vazio quando o escopo é a UF inteira)."""
+        if self.estado_inteiro:
+            return []
+        codigos = list(dict.fromkeys(self.municipios))
+        if not codigos and self.municipio_ibge:
+            codigos = [self.municipio_ibge]
+        return codigos
+
+    def exigir_escopo(self) -> tuple[list[str], str]:
+        """``(códigos IBGE, uf)``; lista vazia significa a UF inteira."""
+        codigos = self.codigos_ibge()
+        if self.uf is None or (not codigos and not self.estado_inteiro):
             raise PilotoNaoDefinidoError(
-                "Defina 'municipio_ibge' e 'uf' em config/piloto.yaml antes da ingestão."
+                "Defina 'uf' e 'municipios' (ou 'estado_inteiro: true') em "
+                "config/piloto.yaml antes da ingestão."
             )
-        if not self.municipio_ibge.startswith(_PREFIXO_UF.get(self.uf, "??")):
-            raise ValueError(f"Código IBGE {self.municipio_ibge} não pertence à UF {self.uf}.")
-        return self.municipio_ibge, self.uf
+        for codigo in codigos:
+            if not re.fullmatch(r"\d{7}", codigo):
+                raise ValueError(f"Código IBGE inválido: {codigo!r}.")
+            if not codigo.startswith(_PREFIXO_UF.get(self.uf, "??")):
+                raise ValueError(f"Código IBGE {codigo} não pertence à UF {self.uf}.")
+        return codigos, self.uf
+
+    def descricao(self) -> str:
+        """Escopo em texto curto (para telas e relatórios)."""
+        codigos = self.codigos_ibge()
+        if self.estado_inteiro:
+            return f"{self.uf} (estado inteiro)"
+        if len(codigos) == 1:
+            return f"município IBGE {codigos[0]}/{self.uf}"
+        return f"{len(codigos)} municípios de {self.uf}"
 
     def periodo(self, hoje: date | None = None) -> tuple[date, date]:
         """Intervalo ``(início, fim)`` analisado."""
@@ -56,12 +96,28 @@ class ConfigPncp(BaseModel):
 
     modalidades: list[int] = Field(default_factory=lambda: list(range(1, 14)))
     intervalo_min_s: float = Field(default=0.25, ge=0)
+    # "todos": itens e vencedores de toda contratação. "seletivo": só de valor a partir de
+    # itens_valor_min ou ligadas a fornecedores com alerta (necessário no estado inteiro).
+    itens: Literal["todos", "seletivo"] = "todos"
+    itens_valor_min: float = Field(default=500_000, ge=0)
+    # Acima deste número de órgãos, os contratos são varridos no país inteiro, por mês.
+    max_orgaos_contratos: int = Field(default=300, ge=1)
+    # Requisições simultâneas. O PNCP leva ~2 s por resposta; o intervalo mínimo entre
+    # requisições (intervalo_min_s) continua valendo entre todas elas.
+    trabalhadores: int = Field(default=8, ge=1, le=32)
+    # A API de consulta (contratações, contratos) responde 429 com poucas dezenas de
+    # requisições por minuto: poucas simultâneas e janelas anuais.
+    trabalhadores_consulta: int = Field(default=2, ge=1, le=8)
+    intervalo_itens_s: float = Field(default=0.1, ge=0)
 
 
 class ConfigReceitaCnpj(BaseModel):
     """Parâmetros de coleta do CNPJ da Receita."""
 
     mes: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+    # Guarda só estabelecimentos ativos do escopo (as fornecedoras entram sempre). Útil no
+    # estado inteiro, em que os baixados são metade das linhas e nenhum sinal os usa.
+    somente_ativas: bool = False
 
 
 class ConfigTse(BaseModel):

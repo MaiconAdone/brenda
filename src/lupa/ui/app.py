@@ -86,8 +86,13 @@ def pagina_ranking(base: Base) -> None:
     )  # fmt: skip
     indice = _situacao(base.indice(), base).filter(pl.col("ranking") == escolha)
 
-    c1, c2, c3 = st.columns(3)
+    c1, c0, c2, c3 = st.columns(4)
     busca = c1.text_input("Nome contém")
+    municipios = sorted({m for lista in indice["municipios"] for m in lista})
+    sel_municipios = c0.multiselect(
+        "Município", municipios, disabled=len(municipios) < 2,
+        help="Município do órgão contratante.",
+    )  # fmt: skip
     orgaos = sorted({o for lista in indice["orgaos"] for o in lista})
     sel_orgaos = c2.multiselect("Órgão", orgaos, disabled=not orgaos)
     categorias = sorted({c for lista in indice["categorias"] for c in lista})
@@ -105,6 +110,10 @@ def pagina_ranking(base: Base) -> None:
     df = indice
     if busca:
         df = df.filter(pl.col("nome").str.contains(f"(?i){re.escape(busca)}"))
+    if sel_municipios:
+        df = df.filter(
+            pl.col("municipios").list.eval(pl.element().is_in(sel_municipios)).list.any()
+        )
     if sel_orgaos:
         df = df.filter(pl.col("orgaos").list.eval(pl.element().is_in(sel_orgaos)).list.any())
     if sel_categorias:
@@ -121,6 +130,7 @@ def pagina_ranking(base: Base) -> None:
     st.caption(f"{df.height} de {indice.height} entidades. Clique numa linha para abrir a ficha.")
     tabela = df.select(
         "posicao", "nome", "tipo", "score", "sinais", "valor_total",
+        municipios=pl.col("municipios").list.join("; "),
         orgaos=pl.col("orgaos").list.join("; "), situacao="situacao", entidade="entidade",
     )  # fmt: skip
     maximo = max([1.0, *indice["score"].to_list()])
@@ -139,6 +149,7 @@ def pagina_ranking(base: Base) -> None:
             ),
             "sinais": st.column_config.ListColumn("Sinais"),
             "valor_total": st.column_config.NumberColumn("Valor vencido", format="R$ %.2f"),
+            "municipios": st.column_config.TextColumn("Municípios"),
             "orgaos": st.column_config.TextColumn("Órgãos"),
             "situacao": st.column_config.TextColumn("Revisão"),
             "entidade": None,
@@ -368,8 +379,9 @@ def main() -> None:
         st.divider()
         st.caption(f"Lupa Cidadã {__version__} · código aberto (AGPL-3.0) · só dados públicos")
         try:
-            municipio, uf = contexto_padrao().config.piloto.exigir_definido()
-            st.caption(f"Piloto: município IBGE {municipio}/{uf}")
+            piloto = contexto_padrao().config.piloto
+            piloto.exigir_escopo()
+            st.caption(f"Escopo: {piloto.descricao()}")
         except PilotoNaoDefinidoError as erro:
             st.caption(str(erro))
 

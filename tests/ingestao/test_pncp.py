@@ -35,7 +35,7 @@ def _contratacao(seq: int, municipio: str = "3529401") -> dict[str, Any]:
 def _api(req: httpx.Request) -> httpx.Response:
     caminho, p = req.url.path, req.url.params
     if caminho.endswith("/contratacoes/publicacao"):
-        if p["codigoModalidadeContratacao"] != "6" or not p["dataInicial"].startswith("202602"):
+        if p["codigoModalidadeContratacao"] != "6" or not p["dataInicial"].startswith("2026"):
             return httpx.Response(204)
         dados = [_contratacao(1), _contratacao(2, municipio="9999999")]
         if p["pagina"] == "1":
@@ -59,7 +59,7 @@ def _api(req: httpx.Request) -> httpx.Response:
             "tipoPessoa": "PF", "nomeRazaoSocialFornecedor": "Fulano Sintético",
             "valorTotalHomologado": 450.0}])  # fmt: skip
     if caminho.endswith("/contratos"):
-        if not p["dataInicial"].startswith("202602"):
+        if not p["dataInicial"].startswith("2026"):
             return httpx.Response(204)
         return httpx.Response(200, json={"data": [{
             "numeroControlePNCP": f"{ORGAO}-2-000001/2026",
@@ -73,6 +73,21 @@ def _api(req: httpx.Request) -> httpx.Response:
     return httpx.Response(404)
 
 
+def test_anos() -> None:
+    assert pncp.anos(date(2024, 11, 15), date(2026, 3, 2)) == [
+        (date(2024, 11, 15), date(2024, 12, 31)),
+        (date(2025, 1, 1), date(2025, 12, 31)),
+        (date(2026, 1, 1), date(2026, 3, 2)),
+    ]
+
+
+def test_arquivo_anual_substitui_mensais(ctx: Contexto, cliente_falso: Fabrica) -> None:
+    pasta = ctx.bronze("pncp", "contratacoes", "3529401")
+    (pasta / "2025-04.jsonl").write_text("", encoding="utf-8")
+    pncp.coletar_contratacoes(ctx, cliente_falso(_api))
+    assert sorted(p.name for p in pasta.glob("*.jsonl")) == ["2025.jsonl", "2026.jsonl"]
+
+
 def test_meses() -> None:
     assert pncp.meses(date(2026, 1, 15), date(2026, 3, 2)) == [
         (date(2026, 1, 15), date(2026, 1, 31)),
@@ -84,7 +99,7 @@ def test_meses() -> None:
 def test_fluxo_completo(ctx: Contexto, cliente_falso: Fabrica) -> None:
     cliente = cliente_falso(_api)
     arquivos = pncp.coletar_contratacoes(ctx, cliente)
-    assert len(arquivos) == 13  # 15/03/2025 a 15/03/2026
+    assert len(arquivos) == 2  # janelas anuais: 15/03/2025–31/12/2025 e 01/01–15/03/2026
     assert pncp.coletar_itens(ctx, cliente) == 2
     assert pncp.coletar_itens(ctx, cliente) == 0  # incremental: nada mudou
     pncp.coletar_contratos(ctx, cliente)
@@ -127,6 +142,58 @@ def test_meses_fechados_nao_sao_recoletados(ctx: Contexto, cliente_falso: Fabric
     pncp.coletar_contratacoes(ctx, cliente)
     chamadas.clear()
     pncp.coletar_contratacoes(ctx, cliente)
-    meses_recoletados = {c.split("dataInicial=")[1][:6] for c in chamadas}
-    # só meses encerrados há até 45 dias (31/01 está a 43 dias de 15/03)
-    assert meses_recoletados == {"202601", "202602", "202603"}
+    anos_recoletados = {c.split("dataInicial=")[1][:4] for c in chamadas}
+    # 2025 terminou há mais de 45 dias: não é recoletado; 2026 ainda está aberto.
+    assert anos_recoletados == {"2026"}
+
+
+def _erro(status: int) -> httpx.HTTPStatusError:
+    req = httpx.Request("GET", "https://pncp.test")
+    return httpx.HTTPStatusError("erro", request=req, response=httpx.Response(status, request=req))
+
+
+def test_contratos_janela_refaz_mes_a_mes_apos_504(monkeypatch: Any) -> None:
+    janelas: list[str] = []
+
+    def paginar(_c: Any, _u: str, params: dict[str, str], _t: int) -> list[dict[str, Any]]:
+        janelas.append(params["dataInicial"])
+        if params["dataInicial"][4:6] != params["dataFinal"][4:6]:
+            raise _erro(504)
+        return [{"mes": params["dataInicial"]}]
+
+    monkeypatch.setattr(pncp, "paginar", paginar)
+    params = {"dataInicial": "20250101", "dataFinal": "20251231", "cnpjOrgao": "1"}
+    registros = pncp._contratos_janela(None, "u", params)  # type: ignore[arg-type]
+    assert len(registros) == 12
+    assert janelas[0] == "20250101" and len(janelas) == 13
+
+
+def test_contratos_janela_nao_mascara_erro_4xx(monkeypatch: Any) -> None:
+    def paginar(*_: Any) -> list[dict[str, Any]]:
+        raise _erro(400)
+
+    monkeypatch.setattr(pncp, "paginar", paginar)
+    params = {"dataInicial": "20250101", "dataFinal": "20251231"}
+    try:
+        pncp._contratos_janela(None, "u", params)  # type: ignore[arg-type]
+    except httpx.HTTPStatusError:
+        return
+    raise AssertionError("esperava erro")
+
+
+def test_falha_de_uma_tarefa_nao_descarta_as_outras(ctx: Contexto, tmp_path: Any) -> None:
+    def ok() -> tuple[Any, str, str]:
+        arquivo = tmp_path / "ok.jsonl"
+        arquivo.write_text("")
+        return arquivo, "u", ""
+
+    def falha() -> tuple[Any, str, str]:
+        raise _erro(504)
+
+    try:
+        pncp._executar(ctx, [ok, falha], 2)
+    except RuntimeError as erro:
+        assert "1 de 2" in str(erro)
+    else:
+        raise AssertionError("esperava RuntimeError")
+    assert (tmp_path / "ok.jsonl").exists()

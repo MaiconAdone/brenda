@@ -94,12 +94,28 @@ em `tests/sinais/`). Execução: `uv run python -m lupa.signals`.
 
 São 21 sinais ativos (20 completos e o C01 parcial), dos quais 2 vêm dos modelos da Fase 5.
 
+### Vitórias
+
+`derivado/vitorias` tem uma linha por fornecedor e licitação vencida. Vem dos **resultados**
+(itens homologados) quando foram coletados; quando não foram (coleta seletiva no estado
+inteiro), vem do **contrato** ligado à licitação (`numeroControlePncpCompra`), com o valor
+global do contrato (`origem = contrato`). Licitação com resultados não gera vitória por
+contrato, para não contar duas vezes.
+
+### Vários municípios
+
+O escopo pode ter vários municípios ou a UF inteira. O E04 confere a abrangência de sanção
+municipal pelo município do órgão contratante (não mais por um município fixo), e a
+interface filtra o ranking por município do contratante.
+
 ### Cruzamentos com o Bolsa Família
 
-- Fonte: API do Portal da Transparência (`novo-bolsa-familia-sacado-beneficiario-por-municipio`),
-  todos os meses desde 03/2023. O CPF vem mascarado; a ligação usa miolo + nome.
-- **Minimização:** a coleta lê cada página e descarta na hora quem não é sócio, doador ou
-  fornecedor PF de campanha. NIS e demais beneficiários não são gravados.
+- Fonte: arquivo mensal nacional de pagamentos do Novo Bolsa Família (Portal da
+  Transparência), todos os meses desde 03/2023. O CPF vem mascarado; a ligação usa miolo
+  + nome, conferida recalculando o `id_pessoa`.
+- **Minimização:** o arquivo é apagado depois da leitura; só ficam as pessoas que são
+  sócias, doadoras ou fornecedoras PF de campanha. NIS e demais beneficiários não são
+  gravados.
 - Nos sinais de campanha (L07, L08) o alerta recai sobre a **candidatura**, nunca sobre o
   beneficiário. Candidaturas ficam num **ranking separado** (`campanhas_top50.md`): doações
   e pagamentos pequenos a pessoas de baixa renda costumam ser legítimos e, misturados,

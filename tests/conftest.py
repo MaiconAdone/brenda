@@ -37,3 +37,26 @@ def dir_config(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return tmp_path
+
+
+MUNICIPIOS_SINTETICOS = {
+    "3529401": "Mauá",
+    "3547809": "Santo André",
+    "3548708": "São Bernardo do Campo",
+}
+
+
+def gravar_ibge_sintetico(raiz: Path) -> None:
+    """Silver ``ibge/municipios`` mínima (define os municípios do escopo nos testes)."""
+    import polars as pl
+
+    from lupa.cleaning.texto import normalizar_nome
+
+    destino = raiz / "silver" / "ibge"
+    destino.mkdir(parents=True, exist_ok=True)
+    pl.DataFrame({
+        "municipio_ibge": list(MUNICIPIOS_SINTETICOS),
+        "nome": list(MUNICIPIOS_SINTETICOS.values()),
+        "nome_normalizado": [normalizar_nome(n) for n in MUNICIPIOS_SINTETICOS.values()],
+        "uf": ["SP"] * len(MUNICIPIOS_SINTETICOS),
+    }).write_parquet(destino / "municipios.parquet")  # fmt: skip

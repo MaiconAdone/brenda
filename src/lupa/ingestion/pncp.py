@@ -1,11 +1,17 @@
-"""PNCP: contratações, itens, resultados (vencedores) e contratos do município do piloto.
+"""PNCP: contratações, itens, resultados (vencedores) e contratos dos municípios do escopo.
 
 Fluxo:
 
 1. ``coletar_contratacoes``: ``/consulta/v1/contratacoes/publicacao`` por mês e modalidade,
-   filtrado por ``codigoMunicipioIbge``. Um arquivo JSON Lines por mês.
+   filtrado por ``codigoMunicipioIbge`` (ou por ``uf`` com o estado inteiro). Um arquivo
+   JSON Lines por município e mês (``contratacoes/<ibge ou UF-xx>/<AAAA-MM>.jsonl``), para
+   que incluir um município no escopo não invalide o que já foi coletado.
 2. ``coletar_itens``: para cada contratação, itens e resultados (``/pncp/v1/orgaos/...``).
-3. ``coletar_contratos``: ``/consulta/v1/contratos`` por mês e por órgão encontrado no passo 1.
+   Com ``itens: seletivo`` só as de valor alto ou ligadas a fornecedores com alerta: no
+   estado inteiro, buscar tudo custaria cerca de 13 milhões de requisições.
+3. ``coletar_contratos``: ``/consulta/v1/contratos`` por mês e por órgão encontrado no passo 1
+   (``contratos/<cnpj>/<AAAA-MM>.jsonl``); com muitos órgãos, varre o país inteiro por mês
+   (``contratos/_nacional/``, 500 por página) e filtra na silver.
 
 Meses encerrados há mais de ``DIAS_REVISAO`` dias não são recoletados (incremental).
 
@@ -16,11 +22,13 @@ propostas. Isso restringe o sinal K03 (propostas próximas).
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
-from datetime import date, timedelta
+from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import httpx
 import polars as pl
 
 from lupa.ingestion.arquivos import gravar_jsonl, gravar_parquet, ler_jsonl, ler_jsonls
@@ -36,6 +44,7 @@ URL_PNCP = "https://pncp.gov.br/api/pncp/v1"
 URL_APP = "https://pncp.gov.br/app"
 TAMANHO_PAGINA = 50
 TAMANHO_PAGINA_ITENS = 500
+TAMANHO_PAGINA_CONTRATOS = 500
 DIAS_REVISAO = 45
 
 
@@ -50,17 +59,35 @@ def meses(inicio: date, fim: date) -> list[tuple[date, date]]:
     return janelas
 
 
+def anos(inicio: date, fim: date) -> list[tuple[date, date]]:
+    """Divide ``[inicio, fim]`` em janelas por ano civil.
+
+    A API de consulta do PNCP limita o número de requisições por IP (responde 429 com
+    poucas dezenas por minuto). Janelas anuais em vez de mensais cortam ~12x as consultas.
+    """
+    return [
+        (max(inicio, date(ano, 1, 1)), min(fim, date(ano, 12, 31)))
+        for ano in range(inicio.year, fim.year + 1)
+    ]
+
+
+def _substituir_mensais(arquivo: Path) -> None:
+    """Apaga os arquivos mensais antigos (``AAAA-MM.jsonl``) cobertos pelo arquivo anual."""
+    for antigo in arquivo.parent.glob(f"{arquivo.stem}-*.jsonl"):
+        antigo.unlink()
+
+
 def _mes_fechado(fim_janela: date, hoje: date) -> bool:
     return (hoje - fim_janela).days > DIAS_REVISAO
 
 
-def paginar(cliente: ClienteHttp, url: str, params: dict[str, Any]) -> Iterator[dict[str, Any]]:
+def paginar(
+    cliente: ClienteHttp, url: str, params: dict[str, Any], tamanho: int = TAMANHO_PAGINA
+) -> Iterator[dict[str, Any]]:
     """Percorre as páginas de um endpoint de consulta do PNCP."""
     pagina = 1
     while True:
-        corpo = cliente.get_json(
-            url, params={**params, "pagina": pagina, "tamanhoPagina": TAMANHO_PAGINA}
-        )
+        corpo = cliente.get_json(url, params={**params, "pagina": pagina, "tamanhoPagina": tamanho})
         if not corpo or corpo.get("empty") or not corpo.get("data"):
             return
         yield from corpo["data"]
@@ -73,45 +100,147 @@ def _fmt(d: date) -> str:
     return d.strftime("%Y%m%d")
 
 
-def coletar_contratacoes(ctx: Contexto, cliente: ClienteHttp) -> list[Path]:
-    """Contratações publicadas no município, um arquivo por mês."""
-    municipio, _ = ctx.config.piloto.exigir_definido()
-    inicio, fim = ctx.config.piloto.periodo(ctx.hoje())
-    destino = ctx.bronze(FONTE, "contratacoes")
-    gravados = []
-    for ini, fim_mes in meses(inicio, fim):
-        arquivo = destino / f"{ini:%Y-%m}.jsonl"
-        if arquivo.exists() and _mes_fechado(fim_mes, ctx.hoje()):
-            continue
-        registros: list[dict[str, Any]] = []
-        for modalidade in ctx.config.ingestao.pncp.modalidades:
-            registros.extend(
-                paginar(
-                    cliente,
-                    f"{URL_CONSULTA}/contratacoes/publicacao",
-                    {
-                        "dataInicial": _fmt(ini),
-                        "dataFinal": _fmt(fim_mes),
-                        "codigoModalidadeContratacao": modalidade,
-                        "codigoMunicipioIbge": municipio,
-                    },
-                )
-            )
-        gravar_jsonl(arquivo, registros)
-        ctx.linhagem.registrar(
-            FONTE,
-            f"{URL_CONSULTA}/contratacoes/publicacao?codigoMunicipioIbge={municipio}"
-            f"&dataInicial={_fmt(ini)}&dataFinal={_fmt(fim_mes)}",
-            arquivo,
-            ctx.agora(),
+def alvos_consulta(ctx: Contexto) -> list[tuple[str, dict[str, str]]]:
+    """``(pasta, filtro)`` de cada consulta: um por município ou um pela UF inteira."""
+    codigos, uf = ctx.config.piloto.exigir_escopo()
+    if not codigos:
+        return [(f"UF-{uf}", {"uf": uf})]
+    return [(c, {"codigoMunicipioIbge": c}) for c in codigos]
+
+
+Tarefa = Callable[[], tuple[Path, str, str]]
+
+
+def _executar(ctx: Contexto, tarefas: list[Tarefa], trabalhadores: int) -> list[Path]:
+    """Roda as tarefas em paralelo, com ``trabalhadores`` simultâneos.
+
+    Cada tarefa baixa e grava um arquivo e devolve ``(arquivo, url, mensagem)``. A
+    linhagem e o log são gravados aqui, na thread principal. O intervalo mínimo entre
+    requisições continua valendo: ele é controlado pelo ``ClienteHttp``, compartilhado.
+    O PNCP responde em ~2 s por requisição, então em série a coleta seria limitada
+    pela latência, não pelo intervalo.
+    """
+    gravados: list[Path] = []
+    falhas: list[str] = []
+    if not tarefas:
+        return gravados
+    with ThreadPoolExecutor(max_workers=trabalhadores) as pool:
+        for futuro in as_completed(pool.submit(t) for t in tarefas):
+            try:
+                arquivo, url, mensagem = futuro.result()
+            except (httpx.HTTPError, OSError) as erro:
+                # Uma falha não descarta o resto: o que deu certo fica gravado e a próxima
+                # execução só refaz o que falta. Mas a etapa termina com erro.
+                log.error("PNCP: tarefa falhou: %s", erro)
+                falhas.append(str(erro))
+                continue
+            ctx.linhagem.registrar(FONTE, url, arquivo, ctx.agora())
+            if mensagem:
+                log.info(mensagem)
+            gravados.append(arquivo)
+            if len(gravados) % 500 == 0:
+                log.info("PNCP: %d de %d tarefas concluídas", len(gravados), len(tarefas))
+    if falhas:
+        raise RuntimeError(
+            f"PNCP: {len(falhas)} de {len(tarefas)} tarefas falharam (as demais foram "
+            f"gravadas; rode de novo para refazer só as que faltam). Primeira: {falhas[0]}"
         )
-        log.info("PNCP contratações %s: %d", f"{ini:%Y-%m}", len(registros))
-        gravados.append(arquivo)
     return gravados
 
 
+def _contratos_janela(
+    cliente: ClienteHttp, url: str, params: dict[str, str]
+) -> list[dict[str, Any]]:
+    """Contratos de uma janela; se o PNCP der erro 5xx, refaz mês a mês.
+
+    Órgãos grandes têm dezenas de milhares de contratos por ano, e as páginas finais de
+    uma janela anual chegam a estourar o tempo do servidor (504).
+    """
+    try:
+        return list(paginar(cliente, url, params, TAMANHO_PAGINA_CONTRATOS))
+    except httpx.HTTPStatusError as erro:
+        ini = datetime.strptime(params["dataInicial"], "%Y%m%d").date()
+        fim = datetime.strptime(params["dataFinal"], "%Y%m%d").date()
+        if erro.response.status_code < 500 or (ini.year, ini.month) == (fim.year, fim.month):
+            raise
+        log.warning("PNCP contratos %s: erro %d na janela %s-%s; refazendo mês a mês",
+                    params.get("cnpjOrgao", "-"), erro.response.status_code,
+                    params["dataInicial"], params["dataFinal"])  # fmt: skip
+    registros: list[dict[str, Any]] = []
+    for i, f in meses(ini, fim):
+        mensal = {**params, "dataInicial": _fmt(i), "dataFinal": _fmt(f)}
+        registros.extend(paginar(cliente, url, mensal, TAMANHO_PAGINA_CONTRATOS))
+    return registros
+
+
+def coletar_contratacoes(ctx: Contexto, cliente: ClienteHttp) -> list[Path]:
+    """Contratações publicadas no escopo, um arquivo por município (ou UF) e ano."""
+    inicio, fim = ctx.config.piloto.periodo(ctx.hoje())
+    modalidades = ctx.config.ingestao.pncp.modalidades
+    tarefas: list[Tarefa] = []
+    for pasta, filtro in alvos_consulta(ctx):
+        destino = ctx.bronze(FONTE, "contratacoes", pasta)
+        for ini, fim_mes in anos(inicio, fim):
+            arquivo = destino / f"{ini:%Y}.jsonl"
+            if arquivo.exists() and _mes_fechado(fim_mes, ctx.hoje()):
+                continue
+
+            def tarefa(
+                arquivo: Path = arquivo,
+                pasta: str = pasta,
+                filtro: dict[str, str] = filtro,
+                ini: date = ini,
+                fim_mes: date = fim_mes,
+            ) -> tuple[Path, str, str]:
+                registros: list[dict[str, Any]] = []
+                for modalidade in modalidades:
+                    registros.extend(
+                        paginar(
+                            cliente,
+                            f"{URL_CONSULTA}/contratacoes/publicacao",
+                            {
+                                "dataInicial": _fmt(ini),
+                                "dataFinal": _fmt(fim_mes),
+                                "codigoModalidadeContratacao": modalidade,
+                                **filtro,
+                            },
+                        )
+                    )
+                gravar_jsonl(arquivo, registros)
+                _substituir_mensais(arquivo)
+                consulta = "&".join(f"{k}={v}" for k, v in filtro.items())
+                url = (
+                    f"{URL_CONSULTA}/contratacoes/publicacao?{consulta}"
+                    f"&dataInicial={_fmt(ini)}&dataFinal={_fmt(fim_mes)}"
+                )
+                return arquivo, url, f"PNCP contratações {pasta} {ini:%Y}: {len(registros)}"
+
+            tarefas.append(tarefa)
+    return _executar(ctx, tarefas, ctx.config.ingestao.pncp.trabalhadores_consulta)
+
+
 def _contratacoes_bronze(ctx: Contexto) -> list[dict[str, Any]]:
-    return ler_jsonls(ctx.bronze(FONTE, "contratacoes").glob("*.jsonl"))
+    return ler_jsonls(sorted(ctx.bronze(FONTE, "contratacoes").rglob("*.jsonl")))
+
+
+def _valor(c: dict[str, Any]) -> float:
+    return float(c.get("valorTotalHomologado") or c.get("valorTotalEstimado") or 0)
+
+
+def _compras_prioritarias(ctx: Contexto) -> set[str]:
+    """Compras ligadas por contrato a fornecedores que já têm alerta (coleta seletiva)."""
+    contratos = ctx.silver(FONTE) / "contratos.parquet"
+    scores = ctx.gold("alertas") / "scores.parquet"
+    if not contratos.exists() or not scores.exists():
+        return set()
+    com_alerta = (
+        pl.read_parquet(scores, columns=["entidade"])
+        .filter(pl.col("entidade").str.starts_with("Empresa:"))
+        .select(pl.col("entidade").str.slice(8))["entidade"]
+    )
+    c = pl.read_parquet(contratos, columns=["numero_controle_compra", "fornecedor_documento"])
+    alvo = c.filter(pl.col("fornecedor_documento").str.slice(0, 8).is_in(com_alerta.implode()))
+    return set(alvo["numero_controle_compra"].drop_nulls())
 
 
 def _chave_compra(c: dict[str, Any]) -> tuple[str, int, int]:
@@ -119,36 +248,57 @@ def _chave_compra(c: dict[str, Any]) -> tuple[str, int, int]:
 
 
 def coletar_itens(ctx: Contexto, cliente: ClienteHttp) -> int:
-    """Itens e resultados de cada contratação. Devolve quantas foram (re)coletadas."""
+    """Itens e resultados das contratações. Devolve quantas foram (re)coletadas.
+
+    Com ``itens: seletivo`` só entram contratações de valor a partir de
+    ``itens_valor_min`` ou ligadas por contrato a fornecedoras que já têm alerta.
+    """
+    cfg = ctx.config.ingestao.pncp
+    prioritarias = _compras_prioritarias(ctx) if cfg.itens == "seletivo" else set()
     destino = ctx.bronze(FONTE, "itens")
-    n = 0
+    puladas = 0
+    tarefas: list[Tarefa] = []
     vistos: set[str] = set()
     for c in _contratacoes_bronze(ctx):
         controle = c["numeroControlePNCP"]
         if controle in vistos:
             continue
         vistos.add(controle)
+        if (
+            cfg.itens == "seletivo"
+            and _valor(c) < cfg.itens_valor_min
+            and controle not in prioritarias
+        ):
+            puladas += 1
+            continue
         arquivo = destino / f"{controle.replace('/', '_')}.jsonl"
         atualizado = c.get("dataAtualizacaoGlobal") or c.get("dataAtualizacao") or ""
         if arquivo.exists() and _ja_atualizado(arquivo, atualizado):
             continue
         cnpj, ano, seq = _chave_compra(c)
         base = f"{URL_PNCP}/orgaos/{cnpj}/compras/{ano}/{seq}"
-        itens = _itens(cliente, base)
-        registros: list[dict[str, Any]] = [
-            {"tipo": "controle", "numeroControlePNCP": controle, "dataAtualizacao": atualizado}
-        ]
-        for item in itens:
-            registros.append({"tipo": "item", "numeroControlePNCP": controle, **item})
-            if item.get("temResultado"):
-                resultados = cliente.get_json(f"{base}/itens/{item['numeroItem']}/resultados")
-                for r in resultados or []:
-                    registros.append({"tipo": "resultado", **r, "numeroControlePNCP": controle})
-        gravar_jsonl(arquivo, registros)
-        ctx.linhagem.registrar(FONTE, f"{base}/itens", arquivo, ctx.agora())
-        n += 1
-    log.info("PNCP itens/resultados coletados para %d contratações", n)
-    return n
+
+        def tarefa(
+            arquivo: Path = arquivo,
+            base: str = base,
+            controle: str = controle,
+            atualizado: str = atualizado,
+        ) -> tuple[Path, str, str]:
+            registros: list[dict[str, Any]] = [
+                {"tipo": "controle", "numeroControlePNCP": controle, "dataAtualizacao": atualizado}
+            ]
+            for item in _itens(cliente, base):
+                registros.append({"tipo": "item", "numeroControlePNCP": controle, **item})
+                if item.get("temResultado"):
+                    resultados = cliente.get_json(f"{base}/itens/{item['numeroItem']}/resultados")
+                    for r in resultados or []:
+                        registros.append({"tipo": "resultado", **r, "numeroControlePNCP": controle})
+            gravar_jsonl(arquivo, registros)
+            return arquivo, f"{base}/itens", ""
+
+        tarefas.append(tarefa)  # fmt: skip
+    log.info("PNCP itens: %d contratações a coletar (%d puladas)", len(tarefas), puladas)
+    return len(_executar(ctx, tarefas, cfg.trabalhadores))
 
 
 def _itens(cliente: ClienteHttp, base: str) -> list[dict[str, Any]]:
@@ -172,36 +322,56 @@ def _ja_atualizado(arquivo: Path, atualizado: str) -> bool:
 
 
 def coletar_contratos(ctx: Contexto, cliente: ClienteHttp) -> list[Path]:
-    """Contratos dos órgãos que publicaram contratações no município, por mês."""
+    """Contratos dos órgãos que publicaram contratações no escopo, por órgão e ano.
+
+    Com mais de ``max_orgaos_contratos`` órgãos (estado inteiro), varre os contratos do
+    país mês a mês, que sai mais barato que consultar órgão por órgão.
+    """
     orgaos = sorted({c["orgaoEntidade"]["cnpj"] for c in _contratacoes_bronze(ctx)})
     inicio, fim = ctx.config.piloto.periodo(ctx.hoje())
-    destino = ctx.bronze(FONTE, "contratos")
-    gravados = []
-    for ini, fim_mes in meses(inicio, fim):
-        arquivo = destino / f"{ini:%Y-%m}.jsonl"
-        if arquivo.exists() and _mes_fechado(fim_mes, ctx.hoje()):
-            continue
-        registros: list[dict[str, Any]] = []
-        for cnpj in orgaos:
-            registros.extend(
-                paginar(
-                    cliente,
-                    f"{URL_CONSULTA}/contratos",
-                    {"dataInicial": _fmt(ini), "dataFinal": _fmt(fim_mes), "cnpjOrgao": cnpj},
-                )
-            )
-        gravar_jsonl(arquivo, registros)
-        ctx.linhagem.registrar(
-            FONTE,
-            f"{URL_CONSULTA}/contratos?dataInicial={_fmt(ini)}&dataFinal={_fmt(fim_mes)}",
-            arquivo,
-            ctx.agora(),
-        )
-        gravados.append(arquivo)
+    nacional = len(orgaos) > ctx.config.ingestao.pncp.max_orgaos_contratos
+    alvos: list[tuple[str, dict[str, str]]] = (
+        [("_nacional", {})] if nacional else [(cnpj, {"cnpjOrgao": cnpj}) for cnpj in orgaos]
+    )
+    url = f"{URL_CONSULTA}/contratos"
+    tarefas: list[Tarefa] = []
+    for pasta, filtro in alvos:
+        destino = ctx.bronze(FONTE, "contratos", pasta)
+        # Por órgão, janelas anuais (menos consultas); na varredura nacional, mensais (um
+        # ano do país inteiro teria milhões de contratos num arquivo só).
+        for ini, fim_mes in (meses if nacional else anos)(inicio, fim):
+            nome = f"{ini:%Y-%m}" if nacional else f"{ini:%Y}"
+            arquivo = destino / f"{nome}.jsonl"
+            if arquivo.exists() and _mes_fechado(fim_mes, ctx.hoje()):
+                continue
+            params = {"dataInicial": _fmt(ini), "dataFinal": _fmt(fim_mes), **filtro}
+
+            def tarefa(
+                arquivo: Path = arquivo, params: dict[str, str] = params
+            ) -> tuple[Path, str, str]:
+                registros = _contratos_janela(cliente, url, params)
+                gravar_jsonl(arquivo, registros)
+                if not nacional:
+                    _substituir_mensais(arquivo)
+                consulta = "&".join(f"{k}={v}" for k, v in params.items())
+                return arquivo, f"{url}?{consulta}", ""
+
+            tarefas.append(tarefa)
+    gravados = _executar(ctx, tarefas, ctx.config.ingestao.pncp.trabalhadores_consulta)
+    log.info("PNCP contratos: %d arquivos novos (%d órgãos)", len(gravados), len(orgaos))
     return gravados
 
 
 # --------------------------------------------------------------------------- silver
+
+
+def _filtro_escopo(ctx: Contexto) -> Callable[[dict[str, Any]], bool]:
+    """Registro do PNCP pertence ao escopo (pela unidade do órgão)?"""
+    codigos, uf = ctx.config.piloto.exigir_escopo()
+    conjunto = set(codigos)
+    if conjunto:
+        return lambda c: str(_get(c, "unidadeOrgao", "codigoIbge") or "") in conjunto
+    return lambda c: bool(_get(c, "unidadeOrgao", "ufSigla") == uf)
 
 
 def _get(d: dict[str, Any] | None, *chaves: str) -> Any:
@@ -217,8 +387,8 @@ def _url_compra(cnpj: str, ano: Any, seq: Any) -> str:
 
 
 def silver_contratacoes(ctx: Contexto) -> pl.DataFrame:
-    """Contratações do município (deduplicadas pela versão mais recente)."""
-    municipio, _ = ctx.config.piloto.exigir_definido()
+    """Contratações do escopo (deduplicadas pela versão mais recente)."""
+    no_escopo = _filtro_escopo(ctx)
     linhas = [
         {
             "numero_controle_pncp": c["numeroControlePNCP"],
@@ -253,6 +423,7 @@ def silver_contratacoes(ctx: Contexto) -> pl.DataFrame:
             ),
         }
         for c in _contratacoes_bronze(ctx)
+        if no_escopo(c)
     ]
     df = _df(linhas, SCHEMA_CONTRATACOES)
     df = _tipar_datas(
@@ -265,8 +436,7 @@ def silver_contratacoes(ctx: Contexto) -> pl.DataFrame:
         ],
     )
     df = (
-        df.filter(pl.col("municipio_ibge") == municipio)
-        .sort("data_atualizacao", nulls_last=False)
+        df.sort("data_atualizacao", nulls_last=False)
         .unique("numero_controle_pncp", keep="last")
         .sort("numero_controle_pncp")
     )
@@ -324,8 +494,8 @@ def silver_itens_resultados(ctx: Contexto) -> tuple[pl.DataFrame, pl.DataFrame]:
 
 
 def silver_contratos(ctx: Contexto) -> pl.DataFrame:
-    """Contratos de unidades localizadas no município, com CPF de PF pseudonimizado."""
-    municipio, _ = ctx.config.piloto.exigir_definido()
+    """Contratos de unidades localizadas no escopo, com CPF de PF pseudonimizado."""
+    no_escopo = _filtro_escopo(ctx)
     linhas = [
         {
             "numero_controle_pncp": c.get("numeroControlePNCP"),
@@ -350,15 +520,15 @@ def silver_contratos(ctx: Contexto) -> pl.DataFrame:
             "url_fonte": f"{URL_APP}/contratos/{_get(c, 'orgaoEntidade', 'cnpj')}/"
             f"{c.get('anoContrato')}/{c.get('sequencialContrato')}",
         }
-        for c in ler_jsonls(ctx.bronze(FONTE, "contratos").glob("*.jsonl"))
+        for c in ler_jsonls(sorted(ctx.bronze(FONTE, "contratos").rglob("*.jsonl")))
+        if no_escopo(c)
     ]
     df = _tipar_datas(
         _df(linhas, SCHEMA_CONTRATOS),
         ["data_assinatura", "data_vigencia_inicio", "data_vigencia_fim", "data_atualizacao"],
     )
     df = (
-        df.filter(pl.col("municipio_ibge") == municipio)
-        .sort("data_atualizacao", nulls_last=False)
+        df.sort("data_atualizacao", nulls_last=False)
         .unique("numero_controle_pncp", keep="last")
         .sort("numero_controle_pncp")
     )

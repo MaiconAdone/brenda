@@ -13,7 +13,7 @@ from lupa.cleaning.documentos import mascarar_cpf
 from lupa.config import ConfigPiloto
 from lupa.ingestion.contexto import Contexto
 from lupa.privacidade import id_pessoa
-from tests.conftest import SAL_TESTE, gerar_cpf
+from tests.conftest import SAL_TESTE, gerar_cpf, gravar_ibge_sintetico
 
 ORGAO = "46522959000198"
 URL = "https://pncp.gov.br/app/editais/sintetico"
@@ -65,6 +65,7 @@ def ctx(tmp_path: Path) -> Contexto:
             "finalidade": "Teste sintético de interesse público.",
         }
     )
+    gravar_ibge_sintetico(tmp_path / "data")
     return Contexto(
         raiz=tmp_path / "data", config=config, agora=lambda: datetime(2026, 3, 15, tzinfo=UTC)
     )

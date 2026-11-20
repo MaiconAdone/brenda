@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 import httpx
 import polars as pl
@@ -64,28 +65,76 @@ def test_data_disponivel(cliente_falso: Fabrica) -> None:
     assert transparencia.data_disponivel(cliente, "ceis") == "20260315"
 
 
-def test_bolsa_familia_guarda_so_socios(ctx: Contexto, cliente_falso: Fabrica) -> None:
-    ctx.config.ingestao.transparencia.bolsa_familia_meses = ["202601"]
-    alvo = id_pessoa(CPF_SOCIO, "José Sintético", SAL_TESTE)
+CABECALHO_BF = linha(
+    "MÊS COMPETÊNCIA", "MÊS REFERÊNCIA", "UF", "CÓDIGO MUNICÍPIO SIAFI", "NOME MUNICÍPIO",
+    "CPF FAVORECIDO", "NIS FAVORECIDO", "NOME FAVORECIDO", "VALOR PARCELA",
+)  # fmt: skip
 
+
+def _zip_bf(tmp: Path, mes: str) -> bytes:
+    """Arquivo mensal sintético: o sócio (com acento), um homônimo e uma pessoa alheia."""
+    conteudo = (
+        CABECALHO_BF
+        + linha(mes, mes, "SP", "6689", "MAUA", "***.456.789-**", "12345678901",
+                "JOSÉ SINTÉTICO", "600,00")
+        + linha(mes, "202312", "SP", "6689", "MAUA", "***.456.789-**", "12345678901",
+                "JOSÉ SINTÉTICO", "1.050,50")
+        + linha(mes, mes, "BA", "3849", "SALVADOR", "***.456.789-**", "999",
+                "JOSE OUTRO NOME", "600,00")
+        + linha(mes, mes, "SP", "6689", "MAUA", "***.444.333-**", "888",
+                "PESSOA ALHEIA", "600,00")
+    )  # fmt: skip
+    return zip_csv(tmp / f"{mes}.zip", {f"{mes}_NovoBolsaFamilia.csv": conteudo}).read_bytes()
+
+
+def _servidor(tmp: Path, publicados: set[str], chamadas: list[str]):  # type: ignore[no-untyped-def]
     def manipulador(req: httpx.Request) -> httpx.Response:
-        if req.url.params["pagina"] != "1":
-            return httpx.Response(200, json=[])
-        return httpx.Response(200, json=[
-            {"beneficiarioNovoBolsaFamilia": {"cpfFormatado": "***.456.789-**",
-                                              "nome": "JOSE SINTETICO"}, "valorSaque": 600.0},
-            {"beneficiarioNovoBolsaFamilia": {"cpfFormatado": "***.444.333-**",
-                                              "nome": "PESSOA ALHEIA"}, "valorSaque": 600.0},
-        ])  # fmt: skip
+        mes = req.url.path.rsplit("/", 1)[-1]
+        if req.method == "GET":
+            chamadas.append(mes)
+        if mes not in publicados:
+            return httpx.Response(404)
+        corpo = _zip_bf(tmp, mes)
+        if req.method == "HEAD":
+            return httpx.Response(200, headers={"content-length": str(len(corpo))})
+        return httpx.Response(200, content=corpo)
 
-    df = transparencia.coletar_bolsa_familia(
-        ctx, cliente_falso(manipulador), pl.DataFrame({"id_pessoa": [alvo]})
-    )
-    assert df.to_dicts() == [{"id_pessoa": alvo, "mes": "202601", "valor_total": 600.0}]
-    manifesto = (ctx.bronze("transparencia", "bolsa_familia") / "202601.manifesto.json").read_text(
-        encoding="utf-8"
-    )
-    assert "PESSOA ALHEIA" not in manifesto and '"registros_lidos": 2' in manifesto
+    return manipulador
+
+
+def _alvos() -> pl.DataFrame:
+    return pl.DataFrame({
+        "id_pessoa": [id_pessoa(CPF_SOCIO, "José Sintético", SAL_TESTE)],
+        "miolo": ["456789"], "nome_normalizado": ["JOSE SINTETICO"],
+    })  # fmt: skip
+
+
+def test_bolsa_familia_guarda_so_alvos(
+    ctx: Contexto, cliente_falso: Fabrica, tmp_path: Path
+) -> None:
+    ctx.config.ingestao.transparencia.bolsa_familia_meses = ["202601"]
+    alvos = _alvos()
+    cliente = cliente_falso(_servidor(tmp_path, {"202601"}, []))
+    df = transparencia.coletar_bolsa_familia(ctx, cliente, alvos, SAL_TESTE)
+    # Duas parcelas no mês (uma retroativa) somadas; homônimo de outro nome e alheio fora.
+    assert df.to_dicts() == [
+        {"id_pessoa": alvos["id_pessoa"][0], "mes": "202601", "valor_total": 1650.5}
+    ]
+    pasta = ctx.bronze("transparencia", "bolsa_familia")
+    manifesto = (pasta / "202601.manifesto.json").read_text(encoding="utf-8")
+    assert "PESSOA ALHEIA" not in manifesto and '"registros_lidos": 4' in manifesto
+    assert "12345678901" not in (pasta / "202601.correspondencias.json").read_text("utf-8")
+    assert not list((pasta / "_tmp").glob("*"))  # arquivo nacional apagado
+
+
+def test_nome_expr_igual_a_normalizar_nome() -> None:
+    from lupa.cleaning.texto import normalizar_nome
+
+    nomes = ["  José   da Silva-Júnior ", "MARIA D'ÁVILA", "Ñoño Çá", "ANA  MARIA"]
+    df = pl.DataFrame({"n": nomes}).select(transparencia.nome_expr("n"))
+    assert df["n"].to_list() == [normalizar_nome(n) for n in nomes]
+    cpfs = pl.DataFrame({"c": ["***.456.789-**", "***456789**", "12345678909"]})
+    assert cpfs.select(transparencia.miolo_expr("c"))["c"].to_list() == ["456789"] * 2 + ["456789"]
 
 
 def test_bolsa_familia_todos_os_meses(ctx: Contexto) -> None:
@@ -99,36 +148,27 @@ def test_bolsa_familia_todos_os_meses(ctx: Contexto) -> None:
     ]
 
 
-def test_bolsa_familia_retoma_meses_fechados(ctx: Contexto, cliente_falso: Fabrica) -> None:
+def test_bolsa_familia_retoma_meses_fechados(
+    ctx: Contexto, cliente_falso: Fabrica, tmp_path: Path
+) -> None:
     ctx.config.ingestao.transparencia.bolsa_familia_meses = ["202501", "202603", "202604"]
-    alvo = id_pessoa(CPF_SOCIO, "José Sintético", SAL_TESTE)
     chamadas: list[str] = []
-
-    def manipulador(req: httpx.Request) -> httpx.Response:
-        mes = req.url.params["mesAno"]
-        chamadas.append(mes)
-        if req.url.params["pagina"] != "1" or mes == "202604":  # 202604 ainda não publicado
-            return httpx.Response(200, json=[])
-        return httpx.Response(200, json=[
-            {"beneficiarioNovoBolsaFamilia": {"cpfFormatado": "***.456.789-**",
-                                              "nome": "JOSE SINTETICO", "nis": "123"},
-             "valorSaque": 600.0},
-        ])  # fmt: skip
-
-    alvos = pl.DataFrame({"id_pessoa": [alvo]})
-    df = transparencia.coletar_bolsa_familia(ctx, cliente_falso(manipulador), alvos)
+    cliente = cliente_falso(_servidor(tmp_path, {"202501", "202603"}, chamadas))
+    alvos = _alvos()
+    df = transparencia.coletar_bolsa_familia(ctx, cliente, alvos, SAL_TESTE)
     assert df["mes"].to_list() == ["202501", "202603"]
     pasta = ctx.bronze("transparencia", "bolsa_familia")
-    assert not (pasta / "202604.manifesto.json").exists()
-    assert "123" not in (pasta / "202501.correspondencias.json").read_text(encoding="utf-8")
+    assert not (pasta / "202604.manifesto.json").exists()  # ainda não publicado
 
     chamadas.clear()
-    df2 = transparencia.coletar_bolsa_familia(ctx, cliente_falso(manipulador), alvos)
+    df2 = transparencia.coletar_bolsa_familia(ctx, cliente, alvos, SAL_TESTE)
     assert df2.equals(df)
     assert "202501" not in chamadas  # fechado e com os mesmos alvos: não relê
     assert "202603" in chamadas  # recente: relê
 
     chamadas.clear()
-    outros = pl.DataFrame({"id_pessoa": [alvo, "outro"]})
-    transparencia.coletar_bolsa_familia(ctx, cliente_falso(manipulador), outros)
+    outros = pl.concat([alvos, pl.DataFrame(
+        {"id_pessoa": ["outro"], "miolo": ["111111"], "nome_normalizado": ["OUTRO"]}
+    )])  # fmt: skip
+    transparencia.coletar_bolsa_familia(ctx, cliente, outros, SAL_TESTE)
     assert "202501" in chamadas  # alvos mudaram: relê

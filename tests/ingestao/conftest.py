@@ -15,7 +15,7 @@ from tenacity import wait_none
 from lupa.config import ConfigPiloto
 from lupa.ingestion.contexto import Contexto
 from lupa.ingestion.http import ClienteHttp
-from tests.conftest import SAL_TESTE
+from tests.conftest import SAL_TESTE, gravar_ibge_sintetico
 
 
 @pytest.fixture(autouse=True)
@@ -50,6 +50,7 @@ def ctx(tmp_path: Path) -> Contexto:
             "finalidade": "Teste sintético de interesse público.",
         }
     )
+    gravar_ibge_sintetico(tmp_path / "data")
     return Contexto(
         raiz=tmp_path / "data", config=config, agora=lambda: datetime(2026, 3, 15, 12, tzinfo=UTC)
     )

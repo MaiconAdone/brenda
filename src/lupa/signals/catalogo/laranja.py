@@ -1,4 +1,4 @@
-"""Sinais de laranja (L02, L03, L04). L01 depende do Bolsa Família (chave da API)."""
+"""Sinais de laranja (L02, L03, L04). Os cruzamentos com o Bolsa Família estão em ``beneficios``."""
 
 from __future__ import annotations
 

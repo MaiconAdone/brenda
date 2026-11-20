@@ -6,12 +6,12 @@ Receita `6689`, TSE `66893`.
 | Fonte | Acesso verificado | Formato / volume | Chave | Módulo |
 |---|---|---|---|---|
 | IBGE: municípios | `servicodados.ibge.gov.br/api/v1/localidades/estados/{UF}/municipios` | JSON, 645 municípios em SP | não | `ingestion/ibge.py` |
-| PNCP: contratações | `pncp.gov.br/api/consulta/v1/contratacoes/publicacao` (filtro `codigoMunicipioIbge`, por modalidade 1–13 e mês) | JSON paginado | não | `ingestion/pncp.py` |
+| PNCP: contratações | `pncp.gov.br/api/consulta/v1/contratacoes/publicacao` (filtro `codigoMunicipioIbge`, por modalidade 1–13 e ano; ou `uf` no estado inteiro) | JSON paginado | não | `ingestion/pncp.py` |
 | PNCP: itens e resultados | `pncp.gov.br/api/pncp/v1/orgaos/{cnpj}/compras/{ano}/{seq}/itens[/{n}/resultados]` | JSON | não | `ingestion/pncp.py` |
 | PNCP: contratos | `pncp.gov.br/api/consulta/v1/contratos` (filtro `cnpjOrgao`; sem filtro de município) | JSON paginado | não | `ingestion/pncp.py` |
 | Receita: CNPJ | `arquivos.receitafederal.gov.br` → link público Nextcloud `index.php/s/gn672Ad4CF8N6TK`, pasta `Dados/Cadastros/CNPJ/AAAA-MM/`, listagem por WebDAV | 37 ZIPs, **~7,8 GB/mês** (Estabelecimentos0.zip sozinho: 2,3 GB) | não | `ingestion/receita_cnpj.py` |
 | CGU: CEIS / CNEP | `portaldatransparencia.gov.br/download-de-dados/{ceis,cnep}/AAAAMMDD` → redireciona para `dadosabertos-download.cgu.gov.br` | ZIP/CSV latin-1, ~3,5 MB | não | `ingestion/transparencia.py` |
-| CGU: Novo Bolsa Família | `api.portaldatransparencia.gov.br/api-de-dados/novo-bolsa-familia-sacado-beneficiario-por-municipio` | JSON paginado | **sim** | `ingestion/transparencia.py` |
+| CGU: Novo Bolsa Família | `portaldatransparencia.gov.br/download-de-dados/novo-bolsa-familia/{AAAAMM}` | ZIP/CSV mensal nacional | não | `ingestion/transparencia.py` |
 | TSE: candidatos | `cdn.tse.jus.br/estatistica/sead/odsele/consulta_cand/consulta_cand_{ano}.zip` (catálogo CKAN `dadosabertos.tse.jus.br`) | ZIP por ano, 65–85 MB, um CSV por UF | não | `ingestion/tse.py` |
 | TSE: prestação de contas | `cdn.tse.jus.br/.../prestacao_contas/prestacao_de_contas_eleitorais_candidatos_{ano}.zip` | ZIP por ano, **~1,3–1,4 GB** | não | `ingestion/tse.py` |
 
@@ -38,12 +38,34 @@ Receita `6689`, TSE `66893`.
    propostas, o que limita o K03. A cobertura também depende da adesão do município ao
    PNCP: contratações anteriores à Lei 14.133 podem faltar.
 8. **PNCP: contratos sem filtro de município.** São consultados por CNPJ dos órgãos que
-   publicaram contratações em Mauá e depois filtrados pela unidade (`codigoIbge`).
-9. **Bolsa Família exige chave e é volumoso.** Cerca de 1.235 páginas de 15 registros por mês
-   em Mauá (~18,5 mil saques), de 03/2023 em diante: ~53 mil requisições, cerca de 3,5 horas
-   com 0,2 s entre requisições (limite da API: 400/min de dia). A coleta é retomável por mês
-   e só guarda quem coincide com sócios, doadores ou fornecedores PF de campanha.
-   Não há base aberta de óbitos com identificação para cruzar com beneficiários.
+   publicaram contratações no escopo e depois filtrados pela unidade (`codigoIbge`). Com
+   mais de 300 órgãos (estado inteiro), os contratos do país são varridos mês a mês
+   (~200 mil por mês, 500 por página) e filtrados pela UF.
+9. **Bolsa Família: API por município não escala.** Pela API (15 registros por página, por
+   município) o estado de SP custaria ~7 milhões de requisições. A coleta usa o arquivo
+   mensal **nacional** de pagamentos (~360 MB compactado, ~2,3 GB de CSV, ~21 milhões de
+   linhas), que baixa em segundos e é apagado depois da leitura. O cruzamento é um join
+   por miolo do CPF + nome, conferido recalculando o `id_pessoa`. Por ser nacional, acha
+   também sócios que recebem em outro estado. O arquivo traz **pagamentos** (por mês de
+   competência, incluindo parcelas retroativas), não saques como a API; os valores podem
+   diferir um pouco da versão anterior. Não há base aberta de óbitos com identificação
+   para cruzar com beneficiários. **Bloqueio anti-robô:** depois de ~10 meses baixados em
+   sequência, o servidor da CGU (`dadosabertos-download.cgu.gov.br`) passou a responder 405
+   com uma página de verificação humana. O projeto não contorna esse bloqueio: a coleta
+   para, os meses já lidos ficam gravados e a próxima execução continua de onde parou.
+12. **PNCP no estado inteiro.** SP publica ~30 mil contratações por mês (~1,4 milhão em 4
+    anos). Buscar itens e vencedores de cada uma custaria ~13 milhões de requisições (~38
+    dias). Com `itens: seletivo`, só as contratações a partir de `itens_valor_min` ou
+    ligadas a fornecedoras com alerta têm itens coletados; as demais vitórias vêm dos
+    contratos (`origem = contrato`). O PNCP responde em ~2 s por requisição, por isso a
+    coleta usa requisições simultâneas (`trabalhadores`), respeitando o intervalo mínimo.
+    A API de consulta (contratações, contratos) limita por IP (429 sem `Retry-After`, ~15–20
+    por minuto) e já ficou ~50 min fora do ar (503); por isso usa janelas anuais, poucas
+    requisições simultâneas e ritmo adaptativo. Órgãos grandes estouram o tempo do servidor
+    (504/500) em janelas anuais de contratos; nesse caso a janela é refeita mês a mês. Uma
+    tarefa que falha não descarta as outras: a etapa termina com erro e a próxima execução
+    refaz só o que falta. Medido no Grande ABC (7 municípios, 4 anos): ~10 mil contratações,
+    76 mil itens, 10 mil contratos; listagem ~40 min, itens ~1h25, contratos ~1h45.
 10. **RAIS por estabelecimento não é pública.** O F03 continua inativo.
 11. **Servidores municipais** não estão no Portal da Transparência (que é federal). O C01 e o C02
     dependem do portal do TCE-SP ou da prefeitura de Mauá, a avaliar.

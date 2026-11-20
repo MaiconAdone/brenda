@@ -22,6 +22,7 @@ from pathlib import Path
 
 import polars as pl
 
+from lupa import escopo
 from lupa.ingestion.arquivos import extrair_utf8, gravar_parquet, ler_csv_texto
 from lupa.ingestion.contexto import Contexto
 from lupa.ingestion.http import ClienteHttp
@@ -131,26 +132,61 @@ def _processar_zips(
     return df
 
 
-def silver(ctx: Contexto, mes: str, raizes_fornecedores: set[str]) -> dict[str, pl.DataFrame]:
-    """Gera as tabelas silver do CNPJ para o piloto."""
+def municipios_receita(ctx: Contexto, dominio: pl.DataFrame) -> list[str]:
+    """Códigos da Receita dos municípios do escopo (vazio = UF inteira)."""
     piloto = ctx.config.piloto
-    _, uf = piloto.exigir_definido()
-    if piloto.municipio_receita is None:
-        raise ValueError("Defina 'municipio_receita' (código da Receita) em piloto.yaml.")
+    codigos, _ = piloto.exigir_escopo()
+    if not codigos:
+        return []
+    if len(codigos) == 1 and piloto.municipio_receita:
+        return [piloto.municipio_receita]
+    # A tabela de municípios da Receita não tem UF, e há homônimos em outros estados. O
+    # filtro de estabelecimentos também exige a UF, então os homônimos não entram.
+    return escopo.codigos_homonimos(
+        escopo.municipios(ctx), dominio.select("codigo", "descricao").iter_rows(), "Receita"
+    )
+
+
+def silver(ctx: Contexto, mes: str, raizes_fornecedores: set[str]) -> dict[str, pl.DataFrame]:
+    """Gera as tabelas silver do CNPJ para o escopo."""
+    _, uf = ctx.config.piloto.exigir_escopo()
     pasta = ctx.bronze(FONTE, mes)
     saida = ctx.silver(FONTE)
     fornecedores = pl.Series(sorted(raizes_fornecedores), dtype=pl.String)
+
+    dominios = {}
+    for tabela in TABELAS_DOMINIO:
+        zips = _partes(pasta, tabela)
+        if not zips:
+            log.warning("Tabela de domínio %s ausente no mês %s", tabela, mes)
+            continue
+        dominios[tabela.lower()] = _processar_zips(
+            ctx,
+            zips,
+            ["codigo", "descricao"],
+            pl.lit(True),
+            saida / f"dominio_{tabela.lower()}.parquet",
+        )
+    if "municipios" not in dominios:
+        raise RuntimeError(f"Tabela de municípios da Receita ausente no mês {mes}.")
+    codigos = municipios_receita(ctx, dominios["municipios"])
+    no_escopo = (pl.col("uf") == uf) & (
+        pl.col("municipio").is_in(codigos) if codigos else pl.lit(True)
+    )
+    log.info("Receita: %s municípios do escopo", len(codigos) or "todos os")
+    selecao = no_escopo
+    if ctx.config.ingestao.receita_cnpj.somente_ativas:
+        selecao = no_escopo & (pl.col("situacao_cadastral") == "02")
 
     estab = _processar_zips(
         ctx,
         _partes(pasta, "Estabelecimentos"),
         COLUNAS["Estabelecimentos"],
-        ((pl.col("uf") == uf) & (pl.col("municipio") == piloto.municipio_receita))
-        | pl.col("cnpj_basico").is_in(fornecedores.implode()),
+        selecao | pl.col("cnpj_basico").is_in(fornecedores.implode()),
         saida / "_estabelecimentos_bruto.parquet",
     )
     alvo = estab["cnpj_basico"].unique()
-    estab = _tratar_estabelecimentos(estab, piloto.municipio_receita, uf)
+    estab = _tratar_estabelecimentos(estab, no_escopo)
     gravar_parquet(estab, saida / "estabelecimentos.parquet")
     (saida / "_estabelecimentos_bruto.parquet").unlink()
 
@@ -184,19 +220,6 @@ def silver(ctx: Contexto, mes: str, raizes_fornecedores: set[str]) -> dict[str, 
     gravar_parquet(socios, saida / "socios.parquet")
     gravar_parquet(contagem, saida / "socios_contagem_nacional.parquet")
 
-    dominios = {}
-    for tabela in TABELAS_DOMINIO:
-        zips = _partes(pasta, tabela)
-        if not zips:
-            log.warning("Tabela de domínio %s ausente no mês %s", tabela, mes)
-            continue
-        dominios[tabela.lower()] = _processar_zips(
-            ctx,
-            zips,
-            ["codigo", "descricao"],
-            pl.lit(True),
-            saida / f"dominio_{tabela.lower()}.parquet",
-        )
     (saida / "_mes.txt").write_text(mes, encoding="utf-8")
     return {
         "estabelecimentos": estab,
@@ -213,11 +236,12 @@ def _datas(df: pl.DataFrame, colunas: list[str]) -> pl.DataFrame:
     return df.with_columns(pl.col(c).str.to_date("%Y%m%d", strict=False).alias(c) for c in colunas)
 
 
-def _tratar_estabelecimentos(df: pl.DataFrame, municipio: str, uf: str) -> pl.DataFrame:
+def _tratar_estabelecimentos(df: pl.DataFrame, no_escopo: pl.Expr) -> pl.DataFrame:
     df = _datas(df, ["data_situacao_cadastral", "data_inicio_atividade", "data_situacao_especial"])
     return df.with_columns(
         cnpj=pl.concat_str("cnpj_basico", "cnpj_ordem", "cnpj_dv"),
-        no_municipio_piloto=(pl.col("uf") == uf) & (pl.col("municipio") == municipio),
+        # Nome mantido por compatibilidade: verdadeiro para qualquer município do escopo.
+        no_municipio_piloto=no_escopo,
         telefone_1_completo=pl.concat_str("ddd_1", "telefone_1"),
         telefone_2_completo=pl.concat_str("ddd_2", "telefone_2"),
         correio_eletronico=pl.col("correio_eletronico").str.to_lowercase().str.strip_chars(),

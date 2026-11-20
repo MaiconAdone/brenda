@@ -20,6 +20,9 @@ log = logging.getLogger("lupa.ingestion.http")
 
 USER_AGENT = "lupa-cidada/0.1 (+https://github.com/MaiconAdone/brenda)"
 _STATUS_REPETIVEIS = {408, 425, 429, 500, 502, 503, 504}
+# Ritmo adaptativo diante de 429 (ver ClienteHttp._registrar_status).
+INTERVALO_MAX_S = 5.0
+PAUSA_429_S = 10.0
 
 
 def _deve_repetir(erro: BaseException) -> bool:
@@ -51,6 +54,9 @@ class ClienteHttp:
     ) -> None:
         self.intervalo_min_s = intervalo_min_s
         self._ultimo = 0.0
+        self._intervalo = intervalo_min_s
+        self._pausa_ate = 0.0
+        self.n_429 = 0
         self._trava = threading.Lock()
         self._cliente = httpx.Client(
             headers={"User-Agent": USER_AGENT, **(cabecalhos or {})},
@@ -67,16 +73,36 @@ class ClienteHttp:
 
     def _aguardar_vez(self) -> None:
         with self._trava:
-            espera = self._ultimo + self.intervalo_min_s - time.monotonic()
+            agora = time.monotonic()
+            espera = max(self._ultimo + self._intervalo - agora, self._pausa_ate - agora)
             if espera > 0:
                 time.sleep(espera)
             self._ultimo = time.monotonic()
+
+    def _registrar_status(self, status: int) -> None:
+        """Ritmo adaptativo (vale para todas as threads que usam este cliente).
+
+        Em 429 (excesso de requisições), todas pausam e o intervalo entre requisições
+        dobra (até ``INTERVALO_MAX_S``). Em sucesso, o intervalo volta aos poucos ao mínimo
+        configurado. O PNCP limita por IP e não informa ``Retry-After``.
+        """
+        with self._trava:
+            if status == 429:
+                self._intervalo = min(INTERVALO_MAX_S, max(self._intervalo * 2, 0.5))
+                self._pausa_ate = time.monotonic() + PAUSA_429_S
+                self.n_429 += 1
+                if self.n_429 in (1, 10, 100) or self.n_429 % 1000 == 0:
+                    log.warning("429 recebido (%d no total); intervalo agora %.2f s",
+                                self.n_429, self._intervalo)  # fmt: skip
+            elif status < 400:
+                self._intervalo = max(self.intervalo_min_s, self._intervalo * 0.97)
 
     @_repetir
     def get(self, url: str, **kwargs: Any) -> httpx.Response:
         """GET com retry. Levanta erro para status >= 400 (exceto 404, devolvido)."""
         self._aguardar_vez()
         resposta = self._cliente.get(url, **kwargs)
+        self._registrar_status(resposta.status_code)
         if resposta.status_code >= 400 and resposta.status_code != 404:
             resposta.raise_for_status()
         return resposta
@@ -93,6 +119,7 @@ class ClienteHttp:
         """Requisição genérica (ex.: PROPFIND do WebDAV) com retry."""
         self._aguardar_vez()
         resposta = self._cliente.request(metodo, url, **kwargs)
+        self._registrar_status(resposta.status_code)
         resposta.raise_for_status()
         return resposta
 
