@@ -131,6 +131,22 @@ São 19 sinais ativos (18 completos e o C01 parcial).
   `data/gold/relatorios/campanhas_top50.md` (candidaturas): ranking com evidências, fontes e
   limitações, marcado como **não revisado** e de uso interno.
 
+## Interface e dossiê
+
+- **Ranking:** filtros por órgão, período (sobreposição com as datas de vitórias e contratos),
+  categoria de sinal, valor vencido e situação da revisão. Candidaturas têm ranking próprio.
+- **Ficha:** cadastro, sinais com evidências e links, cronologia (abertura, entrada de sócios,
+  vitórias, contratos, sanções), licitações e contratos, e o subgrafo.
+- **Subgrafo de 2 saltos:** empresa e estabelecimentos contam como um nó só, para que empresas
+  com o mesmo endereço ou contato apareçam. Licitações, contratos e órgãos entram, mas só são
+  expandidos se a pessoa pedir (senão o 2º salto vira a lista de todas as vencedoras). Nós com
+  mais de 50 ligações (contador, centro empresarial) não são expandidos. Acima do limite de
+  nós ficam os mais próximos, com prioridade para os que têm alerta.
+- **Dossiê (PDF):** identificação, score por categoria, revisão humana, sinais com evidências e
+  fontes, limitações, cronologia, licitações, contratos, quadro societário e conexões. O aviso
+  legal fica no topo e no rodapé de todas as páginas. Só é gerado com revisão aprovada e
+  vigente (os sinais atuais iguais aos revisados).
+
 ## Avaliação
 
 - **precisão@k** (k = 10, 50) em amostras revisadas manualmente, por sinal e no ranking geral.

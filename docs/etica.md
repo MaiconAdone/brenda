@@ -47,6 +47,13 @@ Nenhum dossiê é exportado ou divulgado sem que uma pessoa revise:
 2. se há explicação legítima evidente (ex.: endereço compartilhado por ser um centro empresarial);
 3. se a ligação entre pessoas é plausível.
 
+Na interface, a revisão é registrada com nome, decisão (em revisão, aprovado para
+encaminhamento ou descartado) e justificativa, num arquivo só de acréscimo
+(`data/gold/revisoes/revisoes.jsonl`). O botão "Gerar dossiê" só aparece com aprovação
+**vigente**: se os sinais da entidade mudarem depois da revisão (dados novos, regra nova),
+a aprovação perde a validade e é preciso revisar de novo. As decisões "descartado" alimentam
+a medição de falsos positivos.
+
 O destino padrão do dossiê revisado é um órgão competente (MP, TCE/TCU, CGU) ou um jornalista
 que fará apuração própria. O sistema não publica listas de pessoas físicas.
 

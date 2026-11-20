@@ -34,11 +34,18 @@ Colunas que não alimentam nenhum sinal não passam da camada bronze para a silv
 - Nenhuma lista pública de pessoas físicas.
 - A interface do MVP é de uso interno (portas ligadas só em `127.0.0.1` no Docker Compose).
 - Pessoas físicas aparecem em dossiês só após revisão humana.
+- A interface exige que a pessoa se identifique antes de abrir qualquer ficha.
+- Endereço aparece só como bairro e cidade (em MEI costuma ser a casa do titular); telefone e
+  e-mail aparecem só como hash, para mostrar que são compartilhados.
 
 ## Registro de acesso
 
 A API grava em `logs/acesso.jsonl` data, método, caminho, status e usuário de cada requisição.
 A query string **não** é gravada, para não registrar termos de busca com dados pessoais.
+A interface grava no mesmo arquivo quem abriu cada ficha (`ver_entidade`), quem registrou
+revisão (`revisar`) e quem gerou dossiê (`gerar_dossie`). Filtros e buscas não são gravados.
+As revisões (`data/gold/revisoes/revisoes.jsonl`) guardam o nome de quem revisou, como trilha
+de auditoria.
 Os logs ficam fora do repositório e devem ser retidos por prazo definido (sugestão: 6 meses,
 art. 15 do Marco Civil como referência) e depois apagados.
 

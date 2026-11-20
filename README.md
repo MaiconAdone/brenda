@@ -45,6 +45,11 @@ Sinais e score: `uv run python -m lupa.signals [--top 50]` gera os alertas e o r
 `data/gold/relatorios/top50.md`, mais `campanhas_top50.md` para candidaturas (uso interno,
 revisão humana obrigatória).
 
+Interface: `uv run streamlit run src/lupa/ui/app.py` (http://localhost:8501). Ranking com
+filtros, ficha da entidade com evidências, cronologia e conexões até 2 saltos, registro de
+revisão humana e geração do dossiê em PDF, liberada só depois de uma revisão aprovada. Pela linha
+de comando: `uv run python -m lupa.dossier Empresa:<cnpj raiz> -o dossie.pdf --usuario <nome>`.
+
 Sem `make`: `uv run pytest`, `uv run ruff check .`, `uv run mypy`,
 `uv run uvicorn lupa.api.main:app`, `uv run streamlit run src/lupa/ui/app.py`,
 `uv run dagster dev -m pipelines.definitions`.
@@ -65,7 +70,7 @@ Sem `make`: `uv run pytest`, `uv run ruff check .`, `uv run mypy`,
 - [x] Fase 1: ingestão (IBGE, PNCP, CNPJ, CEIS/CNEP, Bolsa Família, TSE) — piloto Mauá/SP
 - [x] Fase 2: entidades (Splink) e grafo (NetworkX; carga no Neo4j)
 - [x] Fase 3: 19 sinais (inclui cruzamentos com o Bolsa Família), score por regras e relatório dos 50 principais alertas
-- [ ] Fase 4: interface e dossiê
+- [x] Fase 4: interface (Streamlit), revisão humana, grafo de 2 saltos e dossiê em PDF
 - [ ] Fase 5: ML (anomalias, comunidades, SHAP)
 - [ ] Fase 6: escala
 
