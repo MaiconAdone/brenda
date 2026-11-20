@@ -183,6 +183,54 @@ class ConfigRegras(BaseModel):
     resolucao_entidades: ConfigResolucao = Field(default_factory=ConfigResolucao)
 
 
+Servidor = Literal["dados", "documentos", "caso"]
+
+
+class ConfigFerramentas(BaseModel):
+    """Limites das ferramentas dos agentes."""
+
+    limite_linhas: int = Field(default=200, ge=1, le=5000)
+    timeout_s: float = Field(default=30, gt=0, le=600)
+    documento_max_mb: float = Field(default=30, gt=0, le=500)
+    dominios_permitidos: list[str] = Field(min_length=1)
+
+
+class ConfigLimitesCaso(BaseModel):
+    """Limites de um caso (ao estourar, o caso vai para inconclusivo)."""
+
+    orcamento_tokens: int = Field(default=200_000, gt=0)
+    max_passos: int = Field(default=40, gt=0)
+    max_ciclos_ceticos: int = Field(default=3, ge=0)
+
+
+class ConfigAgente(BaseModel):
+    """Um papel da equipe."""
+
+    servidores: list[Servidor] = Field(default_factory=list)
+
+
+class ConfigAgentes(BaseModel):
+    """Conteúdo de ``config/agentes.yaml``."""
+
+    arquivo_casos: str = "casos/casos.sqlite"
+    ferramentas: ConfigFerramentas
+    limites_caso: ConfigLimitesCaso = Field(default_factory=ConfigLimitesCaso)
+    agentes: dict[str, ConfigAgente]
+
+    @field_validator("agentes")
+    @classmethod
+    def _analista_sem_escrita(cls, valor: dict[str, ConfigAgente]) -> dict[str, ConfigAgente]:
+        analista = valor.get("analista_documental")
+        if analista and "caso" in analista.servidores:
+            raise ValueError("O Analista documental não pode ter o servidor 'caso' (escrita).")
+        return valor
+
+
+def carregar_agentes(caminho: Path | None = None) -> ConfigAgentes:
+    """Lê e valida ``agentes.yaml``."""
+    return ConfigAgentes.model_validate(_ler_yaml(caminho or diretorio_config() / "agentes.yaml"))
+
+
 # Dois primeiros dígitos do código IBGE de município por UF.
 _PREFIXO_UF = {
     "RO": "11", "AC": "12", "AM": "13", "RR": "14", "PA": "15", "AP": "16", "TO": "17",

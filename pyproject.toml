@@ -22,6 +22,7 @@ api = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
 ui = ["streamlit>=1.38", "reportlab>=4.2"]
 orquestracao = ["dagster>=1.8", "dagster-webserver>=1.8"]
 ml = ["scikit-learn>=1.5", "shap>=0.46"]
+agentes = ["mcp>=1.2", "sqlglot>=25.0", "pypdf>=5.0"]
 
 [dependency-groups]
 dev = [
@@ -56,6 +57,8 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 [tool.ruff.lint.per-file-ignores]
 # Cenários sintéticos em forma de tabela (blocos "fmt: skip").
 "tests/**/conftest.py" = ["E501"]
+# Consultas SQL internas em textos longos.
+"src/lupa/ferramentas/dados.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"

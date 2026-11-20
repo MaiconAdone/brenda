@@ -32,6 +32,10 @@ Colunas que não alimentam nenhum sinal não passam da camada bronze para a silv
 ## Exposição
 
 - Nenhuma lista pública de pessoas físicas.
+- Agentes de IA (Fase 7) só leem as visões de `lupa/ferramentas/visoes.py`: pessoa física
+  por `id_pessoa` e CPF mascarado, sem nome, sem telefone ou e-mail e sem logradouro de MEI
+  (ver `docs/agentes.md`). Dados enviados a um modelo por API saem da máquina: use modelo
+  local (Ollama) se a política exigir.
 - A interface do MVP é de uso interno (portas ligadas só em `127.0.0.1` no Docker Compose).
 - Pessoas físicas aparecem em dossiês só após revisão humana.
 - A interface exige que a pessoa se identifique antes de abrir qualquer ficha.

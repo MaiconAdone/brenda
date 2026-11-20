@@ -5,12 +5,12 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
 
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --no-install-project --extra api --extra ui --extra orquestracao --extra ml
+RUN uv sync --frozen --no-dev --no-install-project --extra api --extra ui --extra orquestracao --extra ml --extra agentes
 
 COPY src ./src
 COPY pipelines ./pipelines
 COPY config ./config
-RUN uv sync --frozen --no-dev --extra api --extra ui --extra orquestracao --extra ml
+RUN uv sync --frozen --no-dev --extra api --extra ui --extra orquestracao --extra ml --extra agentes
 
 RUN useradd --create-home lupa && mkdir -p /app/data /app/logs && chown -R lupa /app/data /app/logs
 USER lupa

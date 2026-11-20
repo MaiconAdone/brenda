@@ -83,6 +83,7 @@ Sem `make`: `uv run pytest`, `uv run ruff check .`, `uv run mypy`,
 - [x] Fase 4: interface (Streamlit), revisão humana, grafo de 2 saltos e dossiê em PDF
 - [x] Fase 5: anomalias (Isolation Forest + SHAP), núcleos de fornecedoras (Louvain) e precisão@k
 - [x] Fase 6: escala (vários municípios ou UF inteira, PNCP seletivo, Bolsa Família pelo arquivo nacional, agendamento semanal)
+- [ ] Fase 7: equipe de agentes investigadores (7.1 arquivo do caso e ferramentas MCP: feita; ver `docs/agentes.md`)
 
 ## Licença
 

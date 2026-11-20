@@ -1,0 +1,38 @@
+# Equipe de agentes investigadores (Fase 7). Ver docs/agentes.md.
+#
+# Cada agente recebe só os servidores MCP do seu papel. "caso" é o único que escreve, e só
+# no arquivo do caso. O Analista documental NÃO recebe "caso": ele só lê e extrai.
+# Modelos e limites são usados a partir da etapa 7.2.
+
+arquivo_casos: casos/casos.sqlite   # relativo a LUPA_DATA_DIR
+
+ferramentas:
+  limite_linhas: 200          # máximo de linhas por consulta SQL ou de grafo
+  timeout_s: 30               # tempo máximo de uma consulta
+  documento_max_mb: 30        # maior documento que ler_documento baixa
+  dominios_permitidos:        # únicos hosts que as ferramentas de documento acessam
+    - pncp.gov.br
+    - api.queridodiario.org.br
+    - queridodiario.ok.org.br
+    - data.queridodiario.ok.org.br
+    - querido-diario.nyc3.cdn.digitaloceanspaces.com
+    - portaldatransparencia.gov.br
+
+limites_caso:
+  orcamento_tokens: 200000
+  max_passos: 40
+  max_ciclos_ceticos: 3
+
+agentes:
+  coordenador:
+    servidores: [dados, caso]
+  monitor:
+    servidores: [dados, caso]
+  investigador:
+    servidores: [dados, documentos, caso]
+  analista_documental:
+    servidores: [documentos]
+  cetico:
+    servidores: [dados, documentos, caso]
+  redator:
+    servidores: [dados]
