@@ -24,6 +24,7 @@ from lupa.config import carregar_env, carregar_regras
 from lupa.graph.etapas import ETAPAS as ETAPAS_GRAFO
 from lupa.ingestion.contexto import Contexto, contexto_padrao
 from lupa.ingestion.etapas import ETAPAS, Resultado
+from lupa.ml.etapas import etapa_ml
 from lupa.signals.executar import etapa_sinais
 
 carregar_env()
@@ -57,10 +58,17 @@ DEPENDENCIAS = {
     "entidades": ["pncp", "tse", "receita_cnpj", "sancoes"],
     "grafo": ["entidades"],
     "neo4j": ["grafo"],
-    "sinais": ["grafo", "bolsa_familia"],
+    "ml": ["grafo"],
+    "sinais": ["grafo", "bolsa_familia", "ml"],
 }
 
-GRUPOS = {"entidades": "grafo", "grafo": "grafo", "neo4j": "neo4j", "sinais": "sinais"}
+GRUPOS = {
+    "entidades": "grafo",
+    "grafo": "grafo",
+    "neo4j": "neo4j",
+    "ml": "sinais",
+    "sinais": "sinais",
+}
 
 
 def _materializar(resultado: Resultado) -> MaterializeResult:
@@ -104,7 +112,7 @@ def _criar_asset(nome: str, funcao: Callable[[Contexto], Resultado]) -> AssetsDe
 
 ASSETS = [
     _criar_asset(nome, funcao)
-    for nome, funcao in {**ETAPAS, **ETAPAS_GRAFO, "sinais": etapa_sinais}.items()
+    for nome, funcao in {**ETAPAS, **ETAPAS_GRAFO, "ml": etapa_ml, "sinais": etapa_sinais}.items()
 ]
 
 ingestao_completa = define_asset_job(

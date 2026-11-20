@@ -89,8 +89,10 @@ em `tests/sinais/`). Execução: `uv run python -m lupa.signals`.
 | E02 | ≥ 3 dispensas do mesmo órgão ao mesmo fornecedor em 365 dias | execução | **ativo** | Emergências e pequenas compras distintas |
 | E03 | Dispensas por valor (art. 75, I/II) que somam acima do limite em 90 dias | execução | **ativo** | Aproxima "mesma natureza" por órgão + fornecedor |
 | E04 | Vitória/contrato com sanção vigente que alcança o contratante | execução | **ativo** | Só sanções ainda listadas no CEIS/CNEP |
+| M01 | Perfil de fornecedora atípico (Isolation Forest + SHAP) | anomalia | **ativo, só combinado** | Aponta o raro, não o irregular |
+| M02 | Núcleo de 3+ fornecedoras ligadas que vendem ao mesmo órgão (Louvain) | conluio | **ativo** | Grupos econômicos legítimos também formam núcleos |
 
-São 19 sinais ativos (18 completos e o C01 parcial).
+São 21 sinais ativos (20 completos e o C01 parcial), dos quais 2 vêm dos modelos da Fase 5.
 
 ### Cruzamentos com o Bolsa Família
 
@@ -147,12 +149,65 @@ São 19 sinais ativos (18 completos e o C01 parcial).
   legal fica no topo e no rodapé de todas as páginas. Só é gerado com revisão aprovada e
   vigente (os sinais atuais iguais aos revisados).
 
+## Modelos de apoio (Fase 5)
+
+`uv run python -m lupa.ml` grava `data/gold/ml/` (features, anomalias e núcleos). Rode antes
+de `python -m lupa.signals`. Modelos entram só como apoio: o M01 não conta sozinho no score,
+e todo alerta de modelo traz a explicação em dados.
+
+### Anomalias (M01)
+
+- **Unidade:** fornecedora privada que venceu ao menos uma licitação (769 no piloto).
+- **Features:** licitações vencidas, valor vencido, fração por dispensa ou inexigibilidade,
+  preço homologado / estimado (mediana dos itens), dias entre abertura e 1ª vitória, valor
+  vencido / capital social, maior acréscimo em contrato e número de empresas com o mesmo
+  telefone ou e-mail.
+- **Direção de risco:** o Isolation Forest não tem direção e, na primeira rodada, apontou
+  como atípicas empresas que atendem 2 órgãos (quase todas atendem 1) ou que são muito
+  antigas. Por isso cada feature tem um lado de risco, e o lado seguro é cortado na mediana
+  antes do modelo. Número de órgãos, concentração e número de sócios saíram por não terem
+  direção clara.
+- **Qualidade dos dados:** o `percentual_desconto` do PNCP vem zerado em 94% dos resultados
+  (campo não preenchido) e não é usado. Na razão de preços, itens com razão fora de
+  0,05–10 são ignorados (unidade do lote contra unidade do item). Contatos de mais de 10
+  empresas (contadores) são ignorados, como no F06.
+- **Modelo:** `IsolationForest` (300 árvores, semente 42); log1p nas variáveis de cauda longa;
+  nulos pela mediana. Marca o 2% mais atípico (`percentil: 0.98` em `config/regras.yaml`).
+  Confiança de 0,5 no limiar a 1,0 na empresa mais atípica.
+- **Explicação:** SHAP (`TreeExplainer`). O alerta lista as 3 features que mais empurraram a
+  empresa para o atípico, com o valor dela e a mediana das demais.
+- **Limitação conhecida:** cooperativas da agricultura familiar vendem por chamada pública
+  (dispensa) e aparecem com frequência.
+
+### Comunidades (M02)
+
+- **Grafo de fornecedoras:** co-vitória na mesma licitação (peso 1/(k−1) para k vencedoras,
+  para um pregão de 20 lotes não ligar todo mundo), sócio em comum (2), mesmo telefone ou
+  e-mail (2, ignorando contatos de mais de 10 empresas) e mesmo endereço (1, ignorando
+  endereços de mais de 5 empresas).
+- **Louvain** (NetworkX, semente 42). As comunidades saem grandes (até ~80 empresas) porque
+  as co-vitórias ligam muita gente; por isso o sinal olha o **núcleo**: dentro da
+  comunidade, componente de 3+ empresas ligadas por laços, com ao menos um laço forte
+  (sócio ou contato) e 2+ empresas vendendo ao mesmo órgão.
+- Confiança 1,0 quando o núcleo venceu junto a mesma licitação; 0,7 caso contrário.
+- No piloto: 10 núcleos, 41 empresas. Sobrepõe-se ao K04/F06; o teto da categoria conluio
+  (30) limita a soma.
+- Leiden não foi usado para não acrescentar dependências (igraph); com estes tamanhos o
+  Louvain basta.
+
 ## Avaliação
 
-- **precisão@k** (k = 10, 50) em amostras revisadas manualmente, por sinal e no ranking geral.
-- Cada revisão registra: alerta, revisor (pseudônimo), veredito (procedente / explicação
-  legítima / dado errado) e justificativa.
-- Meta principal: reduzir falsos positivos.
+- **precisão@k** (k = 10, 20, 50) por ranking, a partir das revisões registradas na interface
+  (decisões "aprovado" e "descartado"), com a **cobertura** (quantas das k foram revisadas).
+- **precisão por sinal:** entre as entidades revisadas em que o sinal disparou, a fração
+  aprovada.
+- Na interface: página "Avaliação". Pela linha de comando: `uv run python -m lupa.ml avaliacao`
+  (grava `data/gold/avaliacao/`).
+- Cada revisão registra entidade, revisor, decisão, justificativa e os sinais vistos.
+- Meta principal: reduzir falsos positivos. Sinal com precisão baixa numa amostra razoável é
+  recalibrado ou desativado, e a mudança entra no registro abaixo.
+- O supervisionado com rótulos fracos (sanções como rótulo) ficou de fora: o roteiro o trata
+  como opcional e o rótulo tem viés forte (só quem já foi punido).
 
 ## Registro de mudanças nos pesos
 
@@ -161,6 +216,7 @@ São 19 sinais ativos (18 completos e o C01 parcial).
 | 2026-11-17 | todos | — → valores iniciais | Calibração inicial por julgamento, a revisar com precisão@k |
 | 2026-11-18 | F06 | — → `max_empresas_por_contato: 10` | Contatos de contadores e centrais dominavam o sinal |
 | 2026-11-18 | L02 | — → `min_empresas: 10` | Piso para o corte por percentil |
+| 2026-11-19 | M01, M02 | — → 6 (só combinado) / 8 | Sinais de apoio da Fase 5 |
 | 2026-11-19 | L01 | `valor_min_contratos` → (sem parâmetro) | Valor alto passou para o L05 |
 | 2026-11-19 | L05–L08 | — → 8 / 10 / 10 / 8 | Novos cruzamentos com o Bolsa Família |
 | 2026-11-18 | E03 | `margem_abaixo_limite` → `limites` por ano | Limites legais de dispensa por decreto |

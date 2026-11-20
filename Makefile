@@ -1,7 +1,7 @@
 .PHONY: setup ingest run run-local test lint format typecheck check clean
 
 setup:  ## Instala dependências e hooks
-	uv sync --extra api --extra ui --extra orquestracao
+	uv sync --extra api --extra ui --extra orquestracao --extra ml
 	uv run pre-commit install
 	@test -f .env || (cp .env.example .env && echo "Criado .env a partir de .env.example: preencha LUPA_SALT e a chave da API.")
 

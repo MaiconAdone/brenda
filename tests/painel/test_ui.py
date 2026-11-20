@@ -66,3 +66,19 @@ def test_grafico_do_subgrafo(processado: Contexto) -> None:
     assert nos.filter(nos["no"] == EMPRESA)["papel"][0] == "entidade da ficha"
     assert arestas["x"].null_count() == 0 and arestas["x2"].null_count() == 0
     assert grafico(sub).to_dict()["layer"]
+
+
+def test_pagina_de_avaliacao(app: AppTest, processado: Contexto) -> None:
+    from lupa import revisao
+    from lupa.revisao import Revisao
+
+    revisao.registrar(
+        processado.raiz,
+        Revisao(EMPRESA, "descartado", "Ana", "Grupo econômico declarado, sem indício.",
+                ("K04",), 10.0),
+    )  # fmt: skip
+    app.run()
+    app.radio(key="pagina").set_value("Avaliação").run()
+    assert not app.exception
+    assert any("1 entidades com decisão final" in c.value for c in app.caption)
+    assert len(app.dataframe) == 2

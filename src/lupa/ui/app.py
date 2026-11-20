@@ -384,9 +384,48 @@ def main() -> None:
     entidade = st.query_params.get("entidade")
     if entidade:
         pagina_entidade(base, entidade, usuario)
+        return
+    st.title("Lupa Cidadã")
+    with st.sidebar:
+        pagina = st.radio("Página", ["Ranking", "Avaliação"], key="pagina")
+    if pagina == "Avaliação":
+        pagina_avaliacao(base)
     else:
-        st.title("Lupa Cidadã")
         pagina_ranking(base)
+
+
+def pagina_avaliacao(base: Base) -> None:
+    """Precisão@k e precisão por sinal, a partir das revisões humanas."""
+    from lupa.ml.avaliacao import KS, precisao_k, precisao_por_sinal
+
+    st.header("Avaliação")
+    revs = revisao.atuais(base.raiz)
+    finais = sum(r.situacao in ("aprovado", "descartado") for r in revs.values())
+    st.caption(
+        f"{finais} entidades com decisão final (aprovado ou descartado). Precisão@k: das k "
+        "primeiras do ranking já revisadas, quantas foram aprovadas. Cobertura: quantas das k "
+        "foram revisadas; com cobertura baixa a precisão ainda diz pouco."
+    )
+    if not finais:
+        st.info("Ainda não há revisões finais. Revise alertas na ficha de cada entidade.")
+        return
+    pct = st.column_config.NumberColumn(format="percent")
+    st.subheader(f"Precisão@k (k = {', '.join(map(str, KS))})")
+    st.dataframe(
+        precisao_k(base.scores, revs).with_columns(
+            ranking=pl.col("ranking").replace_strict(RANKINGS, default=pl.col("ranking"))
+        ),
+        hide_index=True, width="stretch",
+        column_config={"precisao": pct, "cobertura": pct},
+    )  # fmt: skip
+    st.subheader("Precisão por sinal")
+    nomes = {sid: c.nome for sid, c in base.catalogo.items()}
+    st.dataframe(
+        precisao_por_sinal(base.alertas, revs).with_columns(
+            nome=pl.col("sinal_id").replace_strict(nomes, default=None)
+        ),
+        hide_index=True, width="stretch", column_config={"precisao": pct},
+    )  # fmt: skip
 
 
 main()

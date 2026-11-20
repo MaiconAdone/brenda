@@ -54,6 +54,9 @@ sinais:
         2025: {I: 125451.15, II: 62725.59}
         2026: {I: 130984.20, II: 65492.11}
   E04: {peso: 20, ativo: true, parametros: {}}
+  # Apoio de ML (Fase 5). M01 só conta junto com outro sinal.
+  M01: {peso: 6,  ativo: true, somente_combinado: true, parametros: {percentil: 0.98}}  # Isolation Forest + SHAP
+  M02: {peso: 8,  ativo: true, parametros: {}}  # núcleo de fornecedoras ligadas (Louvain)
 
 # Resolução de entidades (Splink). Ligações abaixo do limiar não entram no grafo.
 # fracao_esperada_duplicatas define a probabilidade a priori de dois registros serem a

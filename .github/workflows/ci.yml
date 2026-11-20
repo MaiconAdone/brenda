@@ -18,7 +18,7 @@ jobs:
           version: "0.13.9"
           enable-cache: true
       - run: uv python install 3.12
-      - run: uv sync --frozen --extra api --extra ui --extra orquestracao
+      - run: uv sync --frozen --extra api --extra ui --extra orquestracao --extra ml
       - name: Lint
         run: |
           uv run ruff check .

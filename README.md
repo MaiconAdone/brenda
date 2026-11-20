@@ -23,7 +23,7 @@ Ver [docs/etica.md](docs/etica.md) e [docs/lgpd.md](docs/lgpd.md).
 Requisitos: [uv](https://docs.astral.sh/uv/), Docker (opcional), `make` (opcional).
 
 ```bash
-make setup              # ou: uv sync --extra api --extra ui --extra orquestracao
+make setup              # ou: uv sync --extra api --extra ui --extra orquestracao --extra ml
 cp .env.example .env    # preencha LUPA_SALT e PORTAL_TRANSPARENCIA_API_KEY
 ```
 
@@ -40,6 +40,9 @@ Ingestão sem Dagster: `uv run python -m lupa.ingestion [ibge pncp receita_cnpj 
 
 Entidades e grafo: `uv run python -m lupa.graph` (gera `data/gold/`). Para carregar no Neo4j
 com o Docker Compose no ar: `uv run python -m lupa.graph neo4j`.
+
+Modelos de apoio (anomalias e núcleos de fornecedoras, extra `ml`): `uv run python -m lupa.ml`,
+antes dos sinais. Avaliação por precisão@k: `uv run python -m lupa.ml avaliacao`.
 
 Sinais e score: `uv run python -m lupa.signals [--top 50]` gera os alertas e o relatório
 `data/gold/relatorios/top50.md`, mais `campanhas_top50.md` para candidaturas (uso interno,
@@ -71,7 +74,7 @@ Sem `make`: `uv run pytest`, `uv run ruff check .`, `uv run mypy`,
 - [x] Fase 2: entidades (Splink) e grafo (NetworkX; carga no Neo4j)
 - [x] Fase 3: 19 sinais (inclui cruzamentos com o Bolsa Família), score por regras e relatório dos 50 principais alertas
 - [x] Fase 4: interface (Streamlit), revisão humana, grafo de 2 saltos e dossiê em PDF
-- [ ] Fase 5: ML (anomalias, comunidades, SHAP)
+- [x] Fase 5: anomalias (Isolation Forest + SHAP), núcleos de fornecedoras (Louvain) e precisão@k
 - [ ] Fase 6: escala
 
 ## Licença

@@ -21,6 +21,7 @@ dependencies = [
 api = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
 ui = ["streamlit>=1.38", "reportlab>=4.2"]
 orquestracao = ["dagster>=1.8", "dagster-webserver>=1.8"]
+ml = ["scikit-learn>=1.5", "shap>=0.46"]
 
 [dependency-groups]
 dev = [
@@ -63,7 +64,7 @@ mypy_path = "src"
 packages = ["lupa"]
 
 [[tool.mypy.overrides]]
-module = ["streamlit.*", "dagster.*"]
+module = ["streamlit.*", "dagster.*", "shap.*", "sklearn.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
